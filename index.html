@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sound Spotter</title>
+<style>
+  :root { --bg:#111417; --panel:#1a1f24; --line:#2a3139; --text:#e6e9ec; --dim:#8b96a1; --accent:#ffb347; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 "Segoe UI",system-ui,sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:20px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 2px; letter-spacing:.2px; }
+  .sub { color:var(--dim); margin:0 0 16px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
+  button, select { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px 14px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#1b1408; border-color:var(--accent); font-weight:600; }
+  select { max-width:340px; }
+  #status { color:var(--dim); font-size:13px; min-height:20px; margin-bottom:14px; }
+  #status b { color:var(--text); font-weight:600; }
+  .warn { color:#ff8a70; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-bottom:16px; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-height:112px; transition:background .25s,border-color .25s,box-shadow .25s; position:relative; }
+  .box h2 { font-size:15px; font-weight:600; margin:0 0 2px; }
+  .box .what { color:var(--dim); font-size:12.5px; }
+  .box .now { font-size:12.5px; margin-top:8px; min-height:18px; font-variant-numeric:tabular-nums; }
+  .box .last { color:var(--dim); font-size:12px; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .box .dot { position:absolute; top:14px; right:14px; width:10px; height:10px; border-radius:50%; background:#39424c; }
+  .box.on { background:color-mix(in srgb,var(--c) 22%,var(--panel)); border-color:var(--c); box-shadow:0 0 18px color-mix(in srgb,var(--c) 35%,transparent); }
+  .box.on .dot { background:var(--c); }
+  .box.recent { border-color:color-mix(in srgb,var(--c) 45%,var(--line)); }
+  canvas { width:100%; height:190px; background:var(--panel); border:1px solid var(--line); border-radius:8px; display:block; }
+  .cap { color:var(--dim); font-size:12px; margin:4px 2px 16px; }
+  .logwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:300px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); }
+  td:last-child { white-space:normal; color:var(--dim); }
+  .meter { flex:1; min-width:140px; height:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  .meter i { display:block; height:100%; width:0; background:var(--accent); }
+  @media (max-width:640px) {
+    main { padding:14px 12px calc(14px + env(safe-area-inset-bottom)); }
+    h1 { font-size:18px; } .sub { font-size:13.5px; margin-bottom:12px; }
+    .bar { gap:8px; } button, select { padding:11px 14px; } #go { flex:1 1 100%; font-size:16px; } select { flex:1 1 100%; max-width:none; }
+    .grid { grid-template-columns:1fr 1fr; gap:8px; }
+    .box { padding:10px 11px; min-height:104px; } .box h2 { font-size:14px; padding-right:16px; } .box .what { font-size:12px; }
+    .box .dot { top:12px; right:11px; }
+    canvas { height:140px; }
+    th, td { padding:6px 8px; font-size:12px; white-space:normal; } th:nth-child(2), td:nth-child(2) { white-space:nowrap; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sound Spotter</h1>
+  <p class="sub">Listens through the microphone and lights a box for each kind of sound it can pick out. Tone boxes need about 10 seconds of listening before they can light; the speech boxes need about 6.</p>
+  <div class="bar">
+    <button id="go" class="primary">Start listening</button>
+    <select id="mic" aria-label="Microphone"></select>
+    <div class="meter" title="Input level"><i id="lvl"></i></div>
+    <button id="csv">Save log (CSV)</button>
+  </div>
+  <div id="status">Not listening.</div>
+  <div class="grid" id="grid"></div>
+  <canvas id="spec" width="1060" height="190"></canvas>
+  <div class="cap">Averaged spectrum, 20 Hz to 20 kHz. Orange: what one microphone hears. Blue: sound common to both microphones, which shows faint tones hidden under microphone hiss.</div>
+  <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th></tr></thead><tbody id="log"></tbody></table></div>
+</main>
+<script>
+// ---- Sound Spotter core (pure DSP, no browser APIs) ----
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1, step = -2 * Math.PI / len;
+    for (let k = 0; k < half; k++) {
+      const cr = Math.cos(step * k), ci = Math.sin(step * k);
+      for (let i = k; i < n; i += len) {
+        const b = i + half;
+        const xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+        re[b] = re[i] - xr; im[b] = im[i] - xi; re[i] += xr; im[i] += xi;
+      }
+    }
+  }
+}
+function median(a) { const b = Float64Array.from(a).sort(); return b.length ? b[b.length >> 1] : 0; }
+function pct(a, p) { const b = Float64Array.from(a).sort(); return b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : 0; }
+const dB = x => 10 * Math.log10(x + 1e-30);
+
+const TONES = [
+  { id: 'whine', f1: 16857, f2: 16863 },
+  { id: 'hum100', f1: 98.8, f2: 101.7 },
+  { id: 'hum50', f1: 48.4, f2: 50.7 },
+  { id: 'plant346', f1: 344.3, f2: 347.3 },
+  { id: 'buzz501', f1: 499.3, f2: 502.7 },
+];
+const FAN = [[255, 270], [515, 531], [1040, 1060]];
+
+class Spotter {
+  constructor(sr) {
+    this.sr = sr; this.NL = 65536; this.NS = 4096; this.hop = Math.round(sr * 0.1);
+    this.L = new Float32Array(this.NL); this.R = new Float32Array(this.NL); this.w = 0; this.n = 0;
+    this.sinceS = 0; this.sinceL = 0; this.t = 0;
+    this.winL = new Float64Array(this.NL); for (let i = 0; i < this.NL; i++) this.winL[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / this.NL);
+    this.winS = new Float64Array(this.NS); for (let i = 0; i < this.NS; i++) this.winS[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / this.NS);
+    const h = this.NL / 2;
+    this.PLL = new Float64Array(h); this.PRR = new Float64Array(h); this.CRe = new Float64Array(h); this.CIm = new Float64Array(h);
+    this.powDb = new Float32Array(h); this.cohDb = new Float32Array(h); this.longCount = 0;
+    this.stereo = null; this.diffAcc = 0; this.sumAcc = 0;
+    this.st = {}; // detector states: {on, text}
+    for (const id of ['speech', 'rhythm', 'pitch', 'whine', 'hum100', 'hum50', 'plant346', 'buzz501', 'fan', 'other', 'rumble', 'click', 'alarm']) this.st[id] = { on: false, text: '', streak: 0, miss: 0 };
+    this.b1 = []; this.b2 = []; this.rumRun = 0; this.rumOff = 0;
+    this.sub = []; this.prevX = 0; this.hpY = 0; this.lpZ = 0; this.hpA = 1 / (1 + 2 * Math.PI * 300 / sr); this.lpB = 1 - Math.exp(-2 * Math.PI * 4000 / sr); this.clickHold = 0;
+    this.alF = -1; this.alRun = 0; this.alHold = 0;
+    this.hopV = Math.round(sr * 0.05); this.sinceV = 0; this.vBase = null; this.vInit = 0; this.envHist = []; this.f0Hist = []; this.clkHist = [];
+    this.rhythm = 0; this.voicedN = 0; this.f0Med = 0; this.f0Iqr = 0; this.rhyRun = 0; this.spHold = 0; this.vDbg = null;
+    this.otherF = -1; this.lastEvent = -100; this.shortDb = new Float32Array(this.NS / 2); this.level = -120;
+  }
+  push(l, r) {
+    const N = l.length, NL = this.NL;
+    for (let i = 0; i < N; i++) {
+      const a = l[i], b = r ? r[i] : a;
+      this.L[this.w] = a; this.R[this.w] = b; this.w = (this.w + 1) % NL;
+      if (this.stereo === null || this.n < this.sr * 3) { const d = a - b; this.diffAcc += d * d; this.sumAcc += a * a + b * b; }
+    }
+    this.n += N; this.sinceS += N; this.sinceL += N; this.sinceV += N; this.t = this.n / this.sr;
+    if (this.n >= this.sr * 1 && this.sumAcc > 0) this.stereo = this.diffAcc / this.sumAcc > 1e-4;
+    while (this.sinceS >= this.hop) { this.sinceS -= this.hop; if (this.n >= this.NS) this.shortFrame(this.sinceS); }
+    while (this.sinceV >= this.hopV) { this.sinceV -= this.hopV; if (this.n >= this.NS) this.voiceFrame(this.sinceV); }
+    if (this.sinceL >= this.sr) { this.sinceL = 0; if (this.n >= NL) this.longFrame(); }
+  }
+  latest(buf, N, back) { // last N samples ending `back` samples before the write head
+    const out = new Float64Array(N), NL = this.NL; let s = (this.w - N - (back || 0) + 2 * NL) % NL;
+    for (let i = 0; i < N; i++) { out[i] = buf[s]; s++; if (s === NL) s = 0; }
+    return out;
+  }
+  bin(f, N) { return Math.max(1, Math.min(N / 2 - 1, Math.round(f * N / this.sr))); }
+
+  // ---------- long frame: steady tones ----------
+  longFrame() {
+    const NL = this.NL, h = NL / 2, w = this.winL;
+    const lr = this.latest(this.L, NL), li = new Float64Array(NL), rr = this.latest(this.R, NL), ri = new Float64Array(NL);
+    for (let i = 0; i < NL; i++) { lr[i] *= w[i]; rr[i] *= w[i]; }
+    fft(lr, li); fft(rr, ri);
+    this.longCount++; const a = 1 / Math.min(this.longCount, 20);
+    for (let k = 0; k < h; k++) {
+      const pl = lr[k] * lr[k] + li[k] * li[k], pr = rr[k] * rr[k] + ri[k] * ri[k];
+      const cre = lr[k] * rr[k] + li[k] * ri[k], cim = li[k] * rr[k] - lr[k] * ri[k];
+      this.PLL[k] += a * (pl - this.PLL[k]); this.PRR[k] += a * (pr - this.PRR[k]);
+      this.CRe[k] += a * (cre - this.CRe[k]); this.CIm[k] += a * (cim - this.CIm[k]);
+      const norm = (NL * NL) / 4 * 0.375 / 0.25; // rough dBFS scaling
+      this.powDb[k] = dB((this.PLL[k] + this.PRR[k]) / 2 / norm);
+      this.cohDb[k] = dB(Math.hypot(this.CRe[k], this.CIm[k]) / norm);
+    }
+    if (this.longCount < 6) return;
+    const hz = this.sr / NL;
+    const prom = (arr, f1, f2) => {
+      const k1 = this.bin(f1, NL), k2 = this.bin(f2, NL); let pk = -1e9, kp = k1;
+      for (let k = k1; k <= k2; k++) if (arr[k] > pk) { pk = arr[k]; kp = k; }
+      const W = 110, G = 4, ref = [];
+      for (let k = Math.max(1, k1 - W); k < k1 - G; k++) ref.push(arr[k]);
+      for (let k = k2 + G + 1; k <= Math.min(h - 1, k2 + W); k++) ref.push(arr[k]);
+      return { prom: pk - median(ref), f: kp * hz, k: kp, level: pk };
+    };
+    const coh = k => { const c = this.CRe[k] * this.CRe[k] + this.CIm[k] * this.CIm[k]; return c / (this.PLL[k] * this.PRR[k] + 1e-60); };
+    const judge = (f1, f2) => {
+      const p = prom(this.powDb, f1, f2);
+      if (p.prom >= 6) return { ok: true, f: p.f, prom: p.prom, level: p.level };
+      if (this.stereo && this.longCount >= 12) { const c = prom(this.cohDb, f1, f2); if (c.prom >= 8 && coh(c.k) >= 0.25) return { ok: true, f: c.f, prom: c.prom, level: this.powDb[c.k], faint: true }; }
+      return { ok: false, prom: p.prom };
+    };
+    const busy = this.t - this.lastEvent < 25; // swells and knocks smear into the averaged spectrum
+    const upd = (id, ok, text) => { if (busy && id !== 'whine' && id !== 'hum100' && id !== 'hum50') { ok = false; } const s = this.st[id]; if (ok) { s.streak++; s.miss = 0; if (s.streak >= 3) { s.on = true; s.text = text; } } else { s.miss++; s.streak = 0; if (s.miss >= 5) s.on = false; } };
+    for (const T of TONES) { const j = judge(T.f1, T.f2); upd(T.id, j.ok, j.ok ? `${j.f.toFixed(1)} Hz · ${j.prom.toFixed(0)} dB above background${j.faint ? ' · faint (two-mic)' : ''}` : ''); }
+    let fanHits = 0, ft = [];
+    for (const [a, b] of FAN) { const p = prom(this.powDb, a, b); if (p.prom >= 7) { fanHits++; ft.push(p.f.toFixed(0)); } }
+    upd('fan', fanHits >= 2, `tones at ${ft.join(', ')} Hz`);
+    // other steady tone: block-median floor, strongest outlier 150 Hz – 20 kHz
+    const BL = 48, k0 = this.bin(150, NL), kE = this.bin(Math.min(20000, this.sr / 2 - 500), NL);
+    const known = k => { const f = k * hz; for (const T of TONES) if (f > T.f1 - 3 && f < T.f2 + 3) return true; for (const [a, b] of FAN) if (this.st.fan.on && f > a - 5 && f < b + 5) return true; return false; };
+    const scan = (arr, thr, needCoh) => {
+      let best = null; const nb = Math.floor((kE - k0) / BL), med = new Float64Array(nb);
+      for (let b = 0; b < nb; b++) med[b] = median(arr.subarray(k0 + b * BL, k0 + (b + 1) * BL));
+      for (let b = 1; b < nb - 1; b++) for (let i = 0; i < BL; i++) {
+        const k = k0 + b * BL + i, x = (i + 0.5) / BL, fl = x < 0.5 ? med[b - 1] * (0.5 - x) + med[b] * (0.5 + x) : med[b] * (1.5 - x) + med[b + 1] * (x - 0.5);
+        const p = arr[k] - fl;
+        if (p >= thr && (!best || p > best.prom) && !known(k) && (!needCoh || coh(k) >= 0.3)) best = { prom: p, f: k * hz, k };
+      }
+      return best;
+    };
+    let o = busy ? null : scan(this.powDb, 9, false);
+    if (!o && !busy && this.stereo && this.longCount >= 15) { o = scan(this.cohDb, 13, true); if (o) o.faint = true; }
+    const s = this.st.other;
+    if (o && Math.abs(o.f - this.otherF) < 2.5) { s.streak++; s.miss = 0; } else if (o) { s.streak = 1; this.otherF = o.f; } else { s.streak = 0; s.miss++; }
+    if (o) this.otherF = o.f;
+    if (s.streak >= 5) { s.on = true; s.text = `${o.f.toFixed(0)} Hz · ${o.prom.toFixed(0)} dB above background${o.faint ? ' · faint (two-mic)' : ''}`; s.miss = 0; }
+    else if (s.miss >= 5 || (s.on && s.streak > 0 && s.streak < 5 && Math.abs(o.f - parseFloat(s.text)) > 3 && ++s.miss >= 5)) s.on = false;
+  }
+
+  // ---------- short frame: events ----------
+  shortFrame(back) {
+    const NS = this.NS, re = this.latest(this.L, NS, back), r2 = this.latest(this.R, NS, back), im = new Float64Array(NS);
+    // clicks: differenced signal, 10 ms sub-frames over the newest hop
+    const subN = Math.round(this.sr * 0.01), hl = this.latest(this.L, this.hop, back), hr = this.latest(this.R, this.hop, back); let clicked = false, ss = 0, sq = 0;
+    for (let i = 0; i < this.hop; i++) {
+      const x = (hl[i] + hr[i]) / 2; this.hpY = this.hpA * (this.hpY + x - this.prevX); this.prevX = x; this.lpZ += this.lpB * (this.hpY - this.lpZ); const d = this.lpZ; ss += d * d; sq += x * x;
+      if ((i + 1) % subN === 0) {
+        const v = dB(ss / subN); ss = 0;
+        if (this.sub.length > 100 && v - median(this.sub) >= 12) clicked = true;
+        this.sub.push(v); if (this.sub.length > 300) this.sub.shift();
+      }
+    }
+    this.level = dB(sq / this.hop);
+    for (let i = 0; i < NS; i++) re[i] = (re[i] + r2[i]) / 2 * this.winS[i];
+    fft(re, im);
+    const P = new Float64Array(NS / 2), norm = NS * NS / 4 * 0.375 / 0.25;
+    for (let k = 0; k < NS / 2; k++) { P[k] = (re[k] * re[k] + im[k] * im[k]) / norm; this.shortDb[k] = dB(P[k]); }
+    const band = (f1, f2) => { let s = 0; for (let k = this.bin(f1, NS); k <= this.bin(f2, NS); k++) s += P[k]; return dB(s); };
+    // click box
+    const c = this.st.click; if (clicked) { this.clickHold = 6; c.text = 'sharp transient'; } if (clicked) this.lastClick = this.t; c.on = this.clickHold > 0; if (clicked || this.st.rumble.on) this.lastEvent = this.t; if (this.clickHold > 0) this.clickHold--;
+    // rumble / vehicle swell
+    const v1 = band(200, 1000), v2 = band(2500, 8000), ru = this.st.rumble;
+    const base1 = this.b1.length > 50 ? pct(this.b1, 0.3) : v1, base2 = this.b2.length > 50 ? pct(this.b2, 0.3) : v2;
+    const up = v1 - base1, hi = v2 - base2;
+    if (up >= 5 && hi < 4 && this.b1.length > 50 && (ru.on || this.rhythm < 2.0) && !this.st.speech.on) { this.rumRun++; this.rumOff = 0; } else { this.rumOff++; if (this.rumOff > 3) this.rumRun = 0; }
+    if (this.rumRun >= 12) { if (!ru.on) this.rumPk = 0; ru.on = true; this.rumPk = Math.max(this.rumPk, up); ru.text = `low-frequency swell · peak +${this.rumPk.toFixed(0)} dB`; }
+    if (ru.on && this.rumOff >= 15) ru.on = false;
+    if (!ru.on || this.b1.length < 100) { this.b1.push(v1); this.b2.push(v2); if (this.b1.length > 900) { this.b1.shift(); this.b2.shift(); } }
+    // alarm-type tone 1.5–5 kHz
+    const k1 = this.bin(1500, NS), k2 = this.bin(5000, NS); let pk = -1e9, kp = k1;
+    for (let k = k1; k <= k2; k++) if (this.shortDb[k] > pk) { pk = this.shortDb[k]; kp = k; }
+    const pr = pk - median(this.shortDb.subarray(k1, k2 + 1)), al = this.st.alarm;
+    if (pr >= 15 && !clicked && Math.abs(kp - this.alF) <= 3) this.alRun++; else this.alRun = pr >= 15 && !clicked ? 1 : 0;
+    this.alF = kp;
+    if (this.alRun >= 3) { this.alHold = 15; al.text = `${(kp * this.sr / NS).toFixed(0)} Hz tone · ${pr.toFixed(0)} dB above background`; }
+    al.on = this.alHold > 0; if (this.alHold > 0) this.alHold--;
+  }
+}
+
+// ---------- voice frame (every 50 ms): muffled speech cues ----------
+Spotter.prototype.voiceFrame = function (back) {
+  const NS = this.NS, re = this.latest(this.L, NS, back), r2 = this.latest(this.R, NS, back), im = new Float64Array(NS);
+  for (let i = 0; i < NS; i++) re[i] = (re[i] + r2[i]) / 2 * this.winS[i];
+  fft(re, im);
+  const kLo = this.bin(70, NS), kHi = this.bin(1300, NS), n = kHi - kLo + 1, P = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let a = 0; for (let j = -1; j <= 1; j++) { const k = kLo + i + j; a += re[k] * re[k] + im[k] * im[k]; } P[i] = a / 3; }
+  if (!this.vBase) { this.vBase = Float64Array.from(P); this.vInit = 1; return; }
+  const B = this.vBase;
+  if (this.vInit < 40) { this.vInit++; for (let i = 0; i < n; i++) B[i] += (P[i] - B[i]) / this.vInit; return; }
+  // speech-band level over background (150–1000 Hz), in dB
+  const i1 = this.bin(150, NS) - kLo, i2 = this.bin(1000, NS) - kLo; let sp = 0, sb = 0;
+  for (let i = i1; i <= i2; i++) { sp += P[i]; sb += B[i]; }
+  const env = dB(sp / sb), quiet = env < 1.0;
+  const al = quiet ? 0.02 : 0.0005; for (let i = 0; i < n; i++) B[i] += al * (P[i] - B[i]);
+  // harmonic comb on the excess spectrum
+  const E = new Float64Array(n); for (let i = 0; i < n; i++) E[i] = Math.max(0, Math.min(20, dB(P[i] / B[i])));
+  const hzb = this.sr / NS, at = f => { const x = f / hzb - kLo; if (x < 0 || x >= n - 1) return 0; const i = Math.floor(x), fr = x - i; return E[i] * (1 - fr) + E[i + 1] * fr; };
+  let best = 0, bf = 0, bh = 0;
+  for (let f0 = 75; f0 <= 300; f0 += 1) {
+    const H = Math.min(8, Math.floor(1250 / f0)); let on = 0, off = 0, strong = 0;
+    let e1 = 0, e2 = 0;
+    for (let h = 1; h <= H; h++) { const e = at(h * f0); on += e; if (e >= 6) strong++; off += at((h - 0.5) * f0); if (h === 1) e1 = e; if (h === 2) e2 = e; }
+    const sc = (on - off) / H, okH = strong >= 3 || (f0 > 150 && e1 >= 8 && e2 >= 8 && off / H < 1.5 && sc >= 6);
+    if (sc > best && okH) { best = sc; bf = f0; bh = strong; }
+  }
+  const clickNow = this.t - (this.lastClick || -9) < 0.3;
+  const voiced = best >= 4.5 && !clickNow;
+  this.envHist.push(env); this.f0Hist.push(voiced ? bf : 0);
+  if (this.envHist.length > 80) { this.envHist.shift(); this.f0Hist.shift(); }
+  if (this.envHist.length < 80) return;
+  // syllable rhythm: rms of the 2–8 Hz part of the level envelope (dB), 4 s window at 20 Hz
+  const N = 80, x = this.envHist; let mx = 0; for (let i = 0; i < N; i++) mx += x[i]; mx /= N;
+  const band = (b1, b2) => { let p = 0; for (let b = b1; b <= b2; b++) { let cr = 0, ci = 0; for (let i = 0; i < N; i++) { const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N), a = 2 * Math.PI * b * i / N; cr += (x[i] - mx) * w * Math.cos(a); ci -= (x[i] - mx) * w * Math.sin(a); } p += cr * cr + ci * ci; } return Math.sqrt(2 * p / (N * N * 0.375)); };
+  this.rhythm = band(8, 32);            // 2–8 Hz
+  const slow = band(1, 3);              // 0.25–0.75 Hz
+  const all = this.f0Hist.filter(v => v > 0).sort((a, b) => a - b), med0 = all.length ? all[all.length >> 1] : 0;
+  const f0s = all.filter(v => Math.abs(v - med0) <= 0.25 * med0);   // drop octave slips and strays
+  this.voicedAll = all.length; this.voicedN = f0s.length; this.f0Med = f0s.length ? f0s[f0s.length >> 1] : 0;
+  this.f0Iqr = f0s.length > 4 ? f0s[Math.floor(f0s.length * 0.9)] - f0s[Math.floor(f0s.length * 0.1)] : 0;
+  this.vDbg = { env, best, bf, rhythm: this.rhythm, slow, voicedN: this.voicedN, iqr: this.f0Iqr };
+  const R = this.st.rhythm, Pi = this.st.pitch, S = this.st.speech;
+  const calm = true;
+  const rOk = calm && this.rhythm >= this.RHY_ON, pOk = calm && this.voicedN >= 7 && this.voicedN >= 0.6 * this.voicedAll && this.voicedAll <= 64 && this.f0Iqr >= 4;
+  if (rOk) this.rhyRun = Math.min(40, this.rhyRun + 1); else this.rhyRun = Math.max(0, this.rhyRun - 2);
+  R.on = this.rhyRun >= 30 || (R.on && calm && this.rhythm >= this.RHY_ON * 0.85); if (R.on) R.text = `syllable-rate pulsing · ${this.rhythm.toFixed(1)} dB swing at 2–8 Hz`;
+  Pi.on = pOk || (Pi.on && calm && this.voicedN >= 4); if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
+  this.bothRun = R.on && Pi.on ? (this.bothRun || 0) + 1 : 0;
+  if (this.bothRun >= 40) this.spHold = 60; else if (this.spHold > 0) this.spHold--;
+  S.on = this.spHold > 0; if (R.on && Pi.on) S.text = `voice pitch about ${this.f0Med.toFixed(0)} Hz with speech rhythm`;
+};
+Spotter.prototype.RHY_ON = 1.6;
+if (typeof module !== 'undefined') module.exports = { Spotter, fft };
+// ---- UI ----
+const BOXES = [
+  { id:'speech',   name:'Muffled speech',       what:'Voice pitch and speech rhythm together',     c:'#ff7ab6' },
+  { id:'rhythm',   name:'Speech rhythm',        what:'Loudness pulsing at syllable rate, 2–8 Hz',  c:'#f5a3c7' },
+  { id:'pitch',    name:'Voice pitch',          what:'Moving harmonic pitch, 75–300 Hz',           c:'#e0b3ff' },
+  { id:'alarm',    name:'Alarm-type tone',      what:'Strong tone or beeping, 1.5–5 kHz',        c:'#ff5d5d' },
+  { id:'whine',    name:'High whine',           what:'Steady 16.86 kHz electronic tone',          c:'#c58bff' },
+  { id:'other',    name:'Other steady tone',    what:'Any other constant pitch, 150 Hz–20 kHz',   c:'#ff8ad1' },
+  { id:'rumble',   name:'Low rumble',           what:'10-second swell, e.g. a vehicle passing',   c:'#ffb347' },
+  { id:'click',    name:'Click or knock',       what:'Sharp, short sound',                         c:'#ffe066' },
+  { id:'hum100',   name:'Mains hum',            what:'100 Hz electrical hum',                      c:'#5fd0a5' },
+  { id:'hum50',    name:'Low hum',              what:'49–50 Hz motor or mains',                    c:'#4fc3d9' },
+  { id:'plant346', name:'Plant tone',           what:'346 Hz tone seen at 02:40',                  c:'#6fa8ff' },
+  { id:'buzz501',  name:'Electrical buzz',      what:'501 Hz mains-locked buzz',                   c:'#9aa7ff' },
+  { id:'fan',      name:'Laptop fan',           what:'Fan tones near 262, 525, 1050 Hz',           c:'#8b96a1' },
+];
+const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
+if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
+const $ = id => document.getElementById(id);
+const grid = $('grid'), els = {}, live = {}, rows = [];
+for (const b of BOXES) {
+  const d = document.createElement('div'); d.className = 'box'; d.style.setProperty('--c', b.c);
+  d.innerHTML = `<span class="dot"></span><h2>${b.name}</h2><div class="what">${b.what}</div><div class="now"></div><div class="last">Not heard yet</div>`;
+  grid.appendChild(d); els[b.id] = d; live[b.id] = { on:false, count:0 };
+}
+const clock = d => d.toLocaleTimeString('en-GB');
+let ctx, stream, node, sp, running = false, startedAt = 0;
+
+function onState() { // called from the audio callback after each chunk
+  const now = new Date();
+  for (const b of BOXES) {
+    const s = sp.st[b.id], l = live[b.id], el = els[b.id];
+    if (s.on && !l.on) {
+      l.on = true; l.count++; l.since = now; l.text = s.text;
+      const tr = document.createElement('tr'); tr.innerHTML = `<td>${clock(now)}</td><td>…</td><td>${b.name}</td><td></td>`; tr.lastChild.textContent = s.text;
+      $('log').prepend(tr); l.tr = tr; l.row = { start: now, end: null, name: b.name, detail: s.text }; rows.push(l.row);
+      el.classList.add('on');
+    } else if (!s.on && l.on) {
+      l.on = false; const dur = (now - l.since) / 1000;
+      l.tr.children[1].textContent = dur < 60 ? dur.toFixed(1) + ' s' : (dur / 60).toFixed(1) + ' min'; l.row.end = now;
+      el.classList.remove('on'); el.classList.add('recent');
+      el.querySelector('.last').textContent = `Last heard ${clock(now)} · ${l.count} time${l.count > 1 ? 's' : ''}`;
+    }
+    if (s.on) { el.querySelector('.now').textContent = s.text; l.text = s.text; if (l.tr) { l.tr.lastChild.textContent = s.text; l.row.detail = s.text; } }
+    else el.querySelector('.now').textContent = '';
+  }
+}
+
+async function listMics(keep) {
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications');
+  const sel = $('mic'); sel.innerHTML = '';
+  for (const d of devs) { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Microphone'; sel.appendChild(o); }
+  const pick = keep || (devs.find(d => /surface/i.test(d.label) && d.deviceId !== 'default') || {}).deviceId;
+  if (pick) sel.value = pick;
+}
+async function start() {
+  try {
+    const want = id => ({ audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 }, sampleRate: { ideal: 48000 } } });
+    stream = await navigator.mediaDevices.getUserMedia(want($('mic').value));
+    const before = $('mic').value; await listMics(before);
+    if (!before && $('mic').value && stream.getAudioTracks()[0].getSettings().deviceId !== $('mic').value) { // labels only appear after permission: switch to the Surface mics
+      stream.getTracks().forEach(t => t.stop()); stream = await navigator.mediaDevices.getUserMedia(want($('mic').value));
+    }
+    const tr = stream.getAudioTracks()[0], set = tr.getSettings();
+    ctx = new AudioContext({ sampleRate: set.sampleRate || 48000, latencyHint: 'playback' });
+    await ctx.resume();
+    sp = new Spotter(ctx.sampleRate);
+    const src = ctx.createMediaStreamSource(stream); node = ctx.createScriptProcessor(4096, 2, 1);
+    const mute = ctx.createGain(); mute.gain.value = 0;
+    node.onaudioprocess = e => { const b = e.inputBuffer; sp.push(b.getChannelData(0), b.numberOfChannels > 1 ? b.getChannelData(1) : null); onState(); };
+    src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    document.addEventListener('visibilitychange', () => { if (running && !document.hidden) { ctx.resume(); if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => wake = w).catch(() => {}); } });
+    running = true; startedAt = Date.now(); $('go').textContent = 'Stop'; $('go').classList.remove('primary');
+    const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => set[k] === true);
+    statusBase = `<b>${tr.label}</b> · ${ctx.sampleRate} Hz` + (proc.length ? ` · <span class="warn">browser processing still on: ${proc.join(', ')}</span>` : ' · browser processing off');
+    try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    draw();
+  } catch (e) { $('status').innerHTML = `<span class="warn">Could not open the microphone: ${e.message}. Allow microphone access for this page and try again.</span>`; }
+}
+let statusBase = '', wake = null;
+function stop() {
+  running = false; if (node) node.disconnect(); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close(); if (wake) wake.release();
+  for (const b of BOXES) { sp.st[b.id].on = false; } onState();
+  $('go').textContent = 'Start listening'; $('go').classList.add('primary'); $('status').textContent = 'Stopped.'; $('lvl').style.width = '0';
+}
+$('go').onclick = () => running ? stop() : start();
+$('mic').onchange = () => { if (running) { stop(); start(); } };
+$('csv').onclick = () => {
+  const q = s => '"' + String(s).replace(/"/g, '""') + '"', iso = d => d ? d.toISOString() : '';
+  const csv = 'start,end,seconds,sound,detail\n' + rows.map(r => [iso(r.start), iso(r.end), r.end ? ((r.end - r.start) / 1000).toFixed(1) : '', q(r.name), q(r.detail)].join(',')).join('\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'sound-spotter-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv'; a.click();
+};
+function draw() {
+  if (!running) return; requestAnimationFrame(draw);
+  $('lvl').style.width = Math.max(0, Math.min(100, (sp.level + 90) / 80 * 100)) + '%';
+  const secs = Math.round((Date.now() - startedAt) / 1000), mm = String(Math.floor(secs / 60)).padStart(2, '0'), ss = String(secs % 60).padStart(2, '0');
+  $('status').innerHTML = statusBase + (sp.stereo === null ? '' : sp.stereo ? ' · two microphones' : ' · one microphone channel') + ` · listening ${mm}:${ss}` + (sp.longCount < 6 ? ' · tone boxes warming up' : '');
+  const cv = $('spec'); if (cv.width !== cv.clientWidth * 2) { cv.width = cv.clientWidth * 2; cv.height = cv.clientHeight * 2; }
+  const g = cv.getContext('2d'), W = cv.width / 2, H = cv.height / 2; g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
+  const x = f => Math.log(f / 20) / Math.log(1000) * W;
+  g.fillStyle = '#8b96a1'; g.font = '11px Segoe UI, sans-serif'; g.strokeStyle = '#2a3139'; g.lineWidth = 1;
+  for (const [f, t] of (W < 500 ? [[100, '100'], [1000, '1k'], [10000, '10k']] : [[50, '50'], [100, '100'], [200, '200'], [500, '500'], [1000, '1k'], [2000, '2k'], [5000, '5k'], [10000, '10k']])) { g.beginPath(); g.moveTo(x(f), 0); g.lineTo(x(f), H - 14); g.stroke(); g.fillText(t, x(f) + 3, H - 3); }
+  if (sp.longCount < 1) return;
+  const N = sp.NL, hz = sp.sr / N, trace = (arr, col) => {
+    const top = new Float32Array(Math.ceil(W)).fill(-1e9);
+    for (let k = Math.ceil(20 / hz); k < N / 2 && k * hz < 20000; k++) { const px = Math.floor(x(k * hz)); if (px >= 0 && px < W && arr[k] > top[px]) top[px] = arr[k]; }
+    g.strokeStyle = col; g.beginPath(); let last = -150, first = true;
+    for (let px = 0; px < W; px++) { const v = top[px] > -1e8 ? (last = top[px]) : last, y = (1 - (v + 150) / 110) * (H - 14); first ? g.moveTo(px, y) : g.lineTo(px, y); first = false; }
+    g.stroke();
+  };
+  if (sp.stereo) trace(sp.cohDb, '#4fc3d9'); trace(sp.powDb, '#ffb347');
+}
+if (navigator.mediaDevices) listMics().catch(() => {}); else $('status').innerHTML = '<span class="warn">This browser cannot open the microphone from this page.</span>';
+</script>
+</body>
+</html>
