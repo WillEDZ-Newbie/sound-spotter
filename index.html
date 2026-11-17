@@ -102,12 +102,12 @@
   <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
   <div class="tools">
     <button id="snap" disabled>Save the last 30 seconds as a clip</button>
-    <button id="zip" disabled>Export labelled clips (.zip)</button>
+    <button id="zip" disabled>Export clips and log for analysis (.zip)</button>
     <button id="csv">Save log (CSV)</button>
     <button id="clear">Clear log</button>
   </div>
   <div class="cap">Clips are kept for muffled speech, alarm-type tones, low rumbles and anything you save by hand. They are amplified so quiet sounds are audible, and the amount is in the file name. Clips live only in this tab until you download them. Listening pauses while a clip plays.</div>
-  <div class="cap"><b>Teach it:</b> play a clip, then pick what it was. Export the labelled clips and send them back for retraining. Every label improves the next model.</div>
+  <div class="cap"><b>Get it analysed:</b> tap Export and send the zip back. It holds every clip from this session, the full log and what the detector measured, so each event can be scored without you labelling anything. If you do know what a clip was, pick it from the menu first: labels make the next model better.</div>
   <audio id="player"></audio>
 </main>
 <script>
@@ -451,7 +451,7 @@ const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
 const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
-const VERSION = 'v3';
+const VERSION = 'v3.1';
 const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
 let MODEL = {"version":"2026-11-17a","trained_on":"11445 rows: 12 voices through 800/500/350 Hz walls and clear at +5/0 dB in real room noise, 12 noise beds, 5 real recordings","HI_MUFFLED":0.06,"logit":{"voicePresent":{"w":{"rhythm":0.9862,"slow":-0.4095,"voiced":6.0159,"voicedAll":-1.5614,"f0Spread":0.527,"envMean":1.0394,"envRange":1.387,"combMean":-8.2573,"combP90":2.1871},"b":-0.2165,"mean":{"rhythm":1.44497,"slow":0.9764,"voiced":0.05758,"voicedAll":0.06748,"f0Spread":0.20955,"envMean":1.77282,"envRange":5.46446,"combMean":0.72811,"combP90":2.28689},"sd":{"rhythm":0.79995,"slow":0.97319,"voiced":0.09597,"voicedAll":0.11721,"f0Spread":0.34978,"envMean":2.2883,"envRange":3.41337,"combMean":1.09319,"combP90":3.03119},"thr":[0.996,0.992,0.973]}}};
 const $ = id => document.getElementById(id);
@@ -526,7 +526,8 @@ function makeClip(x, r) {
     sel.value = r.label || ''; sel.onchange = () => { r.label = sel.value || undefined; sel.classList.toggle('set', !!r.label); dirty = true; save(); countLabels(); };
     c.append(play, a, sel);
   }
-  while (clips.length > 24) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
+  countLabels();
+  while (clips.length > 40) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
 }
 const player = $('player'); let playingBtn = null;
 function playClip(clip, btn) {
@@ -535,7 +536,7 @@ function playClip(clip, btn) {
   playingBtn = btn; btn.textContent = '■ Stop'; paused = true; player.src = clip.url; player.play().catch(() => {});
 }
 player.onpause = player.onended = () => { if (playingBtn) playingBtn.textContent = '▶ Play'; setTimeout(() => { if (player.paused) paused = false; }, 500); };
-function countLabels() { const n = rows.filter(r => r.label).length, m = rows.filter(r => r.label && r.clip).length; $('zip').textContent = n ? `Export labelled clips (${m} of ${n} still in this tab)` : 'Export labelled clips (.zip)'; $('zip').disabled = !m; }
+function countLabels() { const m = clips.length, n = rows.filter(r => r.label).length; $('zip').textContent = m ? `Export ${m} clip${m > 1 ? 's' : ''} and the log for analysis (.zip)` + (n ? ` · ${n} labelled` : '') : 'Export clips and log for analysis (.zip)'; $('zip').disabled = !m; }
 // minimal ZIP writer (stored, no compression) so the labelled set leaves the page as one file
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
@@ -550,12 +551,12 @@ function zip(files) {
   return new Blob([...parts, ...cen, new Uint8Array(e.buffer)], { type: 'application/zip' });
 }
 $('zip').onclick = async () => {
-  const lab = rows.filter(r => r.label), files = [];
+  const lab = rows.filter(r => r.s >= startedAt - 1000 || r.label || r.clip), files = [];   // everything from this session: no labelling needed
   for (const r of lab) if (r.clip) files.push({ name: r.clip.name, data: new Uint8Array(await (await fetch(r.clip.url)).arrayBuffer()) });
   const meta = { app: 'Sound Spotter ' + VERSION, model: MODEL.version, exported: new Date().toISOString(), device: navigator.userAgent, mic: statusBase.replace(/<[^>]+>/g, ''), stereo: sp ? sp.stereo : null,
     events: lab.map(r => ({ start: new Date(r.s).toISOString(), end: r.e ? new Date(r.e).toISOString() : null, detector: r.id, detail: r.d, label: r.label, clip: r.clip ? r.clip.name : null, features: r.f || null })) };
   files.push({ name: 'labels.json', data: new TextEncoder().encode(JSON.stringify(meta, null, 1)) });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-labelled_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-export_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
 };
 $('snap').onclick = () => { if (!running) return; const x = cut(tot - 30 * sp.sr, tot); if (!x) return; const now = Date.now(), r = { s: now - x.length / sp.sr * 1000, e: now, id: 'manual', d: 'the last ' + Math.round(x.length / sp.sr) + ' seconds' }; rows.push(r); addRowDom(r); makeClip(x, r); dirty = true; };
 

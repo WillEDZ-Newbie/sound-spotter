@@ -20,7 +20,7 @@ const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
 const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
-const VERSION = 'v3';
+const VERSION = 'v3.1';
 const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
 let MODEL = __MODEL__;
 const $ = id => document.getElementById(id);
@@ -95,7 +95,8 @@ function makeClip(x, r) {
     sel.value = r.label || ''; sel.onchange = () => { r.label = sel.value || undefined; sel.classList.toggle('set', !!r.label); dirty = true; save(); countLabels(); };
     c.append(play, a, sel);
   }
-  while (clips.length > 24) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
+  countLabels();
+  while (clips.length > 40) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
 }
 const player = $('player'); let playingBtn = null;
 function playClip(clip, btn) {
@@ -104,7 +105,7 @@ function playClip(clip, btn) {
   playingBtn = btn; btn.textContent = '■ Stop'; paused = true; player.src = clip.url; player.play().catch(() => {});
 }
 player.onpause = player.onended = () => { if (playingBtn) playingBtn.textContent = '▶ Play'; setTimeout(() => { if (player.paused) paused = false; }, 500); };
-function countLabels() { const n = rows.filter(r => r.label).length, m = rows.filter(r => r.label && r.clip).length; $('zip').textContent = n ? `Export labelled clips (${m} of ${n} still in this tab)` : 'Export labelled clips (.zip)'; $('zip').disabled = !m; }
+function countLabels() { const m = clips.length, n = rows.filter(r => r.label).length; $('zip').textContent = m ? `Export ${m} clip${m > 1 ? 's' : ''} and the log for analysis (.zip)` + (n ? ` · ${n} labelled` : '') : 'Export clips and log for analysis (.zip)'; $('zip').disabled = !m; }
 // minimal ZIP writer (stored, no compression) so the labelled set leaves the page as one file
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
@@ -119,12 +120,12 @@ function zip(files) {
   return new Blob([...parts, ...cen, new Uint8Array(e.buffer)], { type: 'application/zip' });
 }
 $('zip').onclick = async () => {
-  const lab = rows.filter(r => r.label), files = [];
+  const lab = rows.filter(r => r.s >= startedAt - 1000 || r.label || r.clip), files = [];   // everything from this session: no labelling needed
   for (const r of lab) if (r.clip) files.push({ name: r.clip.name, data: new Uint8Array(await (await fetch(r.clip.url)).arrayBuffer()) });
   const meta = { app: 'Sound Spotter ' + VERSION, model: MODEL.version, exported: new Date().toISOString(), device: navigator.userAgent, mic: statusBase.replace(/<[^>]+>/g, ''), stereo: sp ? sp.stereo : null,
     events: lab.map(r => ({ start: new Date(r.s).toISOString(), end: r.e ? new Date(r.e).toISOString() : null, detector: r.id, detail: r.d, label: r.label, clip: r.clip ? r.clip.name : null, features: r.f || null })) };
   files.push({ name: 'labels.json', data: new TextEncoder().encode(JSON.stringify(meta, null, 1)) });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-labelled_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-export_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
 };
 $('snap').onclick = () => { if (!running) return; const x = cut(tot - 30 * sp.sr, tot); if (!x) return; const now = Date.now(), r = { s: now - x.length / sp.sr * 1000, e: now, id: 'manual', d: 'the last ' + Math.round(x.length / sp.sr) + ' seconds' }; rows.push(r); addRowDom(r); makeClip(x, r); dirty = true; };
 

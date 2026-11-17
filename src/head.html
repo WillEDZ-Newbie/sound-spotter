@@ -102,12 +102,12 @@
   <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
   <div class="tools">
     <button id="snap" disabled>Save the last 30 seconds as a clip</button>
-    <button id="zip" disabled>Export labelled clips (.zip)</button>
+    <button id="zip" disabled>Export clips and log for analysis (.zip)</button>
     <button id="csv">Save log (CSV)</button>
     <button id="clear">Clear log</button>
   </div>
   <div class="cap">Clips are kept for muffled speech, alarm-type tones, low rumbles and anything you save by hand. They are amplified so quiet sounds are audible, and the amount is in the file name. Clips live only in this tab until you download them. Listening pauses while a clip plays.</div>
-  <div class="cap"><b>Teach it:</b> play a clip, then pick what it was. Export the labelled clips and send them back for retraining. Every label improves the next model.</div>
+  <div class="cap"><b>Get it analysed:</b> tap Export and send the zip back. It holds every clip from this session, the full log and what the detector measured, so each event can be scored without you labelling anything. If you do know what a clip was, pick it from the menu first: labels make the next model better.</div>
   <audio id="player"></audio>
 </main>
 <script>
