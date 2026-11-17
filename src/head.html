@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111417">
+<link rel="icon" href="data:,">
+<title>Sound Spotter</title>
+<style>
+  :root { --bg:#111417; --panel:#1a1f24; --line:#2a3139; --text:#e6e9ec; --dim:#8b96a1; --accent:#ffb347; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 "Segoe UI",Roboto,system-ui,sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:20px 20px calc(28px + env(safe-area-inset-bottom)); }
+  h1 { font-size:20px; font-weight:600; margin:0 0 2px; letter-spacing:.2px; }
+  h3 { font-size:13px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:.8px; margin:22px 2px 8px; display:flex; align-items:center; gap:10px; }
+  h3 select { margin-left:auto; padding:4px 8px; font-size:13px; text-transform:none; letter-spacing:0; }
+  .sub { color:var(--dim); margin:0 0 16px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
+  button, select { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px 14px; }
+  button { cursor:pointer; } button:active { filter:brightness(1.25); }
+  button.primary { background:var(--accent); color:#1b1408; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  select { max-width:300px; }
+  #status { color:var(--dim); font-size:13px; min-height:20px; margin-bottom:12px; }
+  #status b { color:var(--text); font-weight:600; }
+  .warn { color:#ff8a70; }
+  #summary { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+  #summary .now { font-size:17px; font-weight:600; }
+  #summary .past { color:var(--dim); font-size:13.5px; margin-top:4px; }
+  #summary .past b { color:var(--text); font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+  .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-height:112px; transition:background .25s,border-color .25s,box-shadow .25s; position:relative; }
+  .box h2 { font-size:15px; font-weight:600; margin:0 0 2px; padding-right:16px; }
+  .box .what { color:var(--dim); font-size:12.5px; }
+  .box .now { font-size:12.5px; margin-top:8px; min-height:18px; font-variant-numeric:tabular-nums; }
+  .box .last { color:var(--dim); font-size:12px; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .box .dot { position:absolute; top:14px; right:14px; width:10px; height:10px; border-radius:50%; background:#39424c; }
+  .box.on { background:color-mix(in srgb,var(--c) 22%,var(--panel)); border-color:var(--c); box-shadow:0 0 18px color-mix(in srgb,var(--c) 35%,transparent); }
+  .box.on .dot { background:var(--c); }
+  .box.recent { border-color:color-mix(in srgb,var(--c) 45%,var(--line)); }
+  canvas { width:100%; background:var(--panel); border:1px solid var(--line); border-radius:8px; display:block; }
+  #spec { height:130px; margin-top:8px; }
+  .wf { position:relative; } #water { height:240px; image-rendering:pixelated; }
+  .wf span { position:absolute; left:6px; font-size:10.5px; color:#fff; opacity:.75; text-shadow:0 0 3px #000,0 0 3px #000; transform:translateY(-50%); pointer-events:none; }
+  .cap { color:var(--dim); font-size:12px; margin:5px 2px 0; }
+  #tones { display:flex; flex-wrap:wrap; gap:6px; }
+  #tones i { font-style:normal; font-size:12.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); background:var(--panel); font-variant-numeric:tabular-nums; }
+  #tones i.f { border-style:dashed; color:var(--dim); }
+  .logwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:340px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:middle; }
+  th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); z-index:1; }
+  td.d { white-space:normal; color:var(--dim); }
+  td.c button, td.c a { padding:3px 9px; font-size:12px; border-radius:5px; text-decoration:none; color:var(--text); background:#232a31; border:1px solid var(--line); display:inline-block; margin-right:4px; }
+  td.c select.lab { padding:3px 6px; font-size:12px; max-width:150px; border-radius:5px; } td.c select.lab.set { border-color:var(--accent); color:var(--accent); }
+  td i.sw { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; }
+  .meter { flex:1; min-width:120px; height:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  .meter i { display:block; height:100%; width:0; background:var(--accent); }
+  #lvltxt { color:var(--dim); font-size:12.5px; min-width:64px; font-variant-numeric:tabular-nums; }
+  .tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  @media (max-width:640px) {
+    main { padding:14px 12px calc(20px + env(safe-area-inset-bottom)); }
+    h1 { font-size:18px; } .sub { font-size:13.5px; margin-bottom:12px; }
+    .bar { gap:8px; } button, select { padding:11px 14px; } #go { flex:1 1 100%; font-size:16px; } .bar select { flex:1 1 45%; max-width:none; min-width:0; }
+    #summary .now { font-size:15.5px; }
+    .grid { grid-template-columns:1fr 1fr; gap:8px; }
+    .box { padding:10px 11px; min-height:104px; } .box h2 { font-size:14px; } .box .what { font-size:12px; } .box .dot { top:12px; right:11px; }
+    #water { height:200px; } #spec { height:110px; }
+    th, td { padding:6px 8px; font-size:12px; white-space:normal; } th:nth-child(2), td:nth-child(2) { white-space:nowrap; }
+    .tools button { flex:1 1 45%; } td.c select.lab { max-width:118px; margin-top:4px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sound Spotter</h1>
+  <p class="sub">Listens through the microphone, lights a box for each kind of sound it recognises, and keeps short clips of the interesting ones so you can check them by ear and teach it what they were.</p>
+  <div class="bar">
+    <button id="go" class="primary">Start listening</button>
+    <select id="mic" aria-label="Microphone"></select>
+    <select id="sens" aria-label="Sensitivity"><option value="0">Sensitivity: low</option><option value="1" selected>Sensitivity: normal</option><option value="2">Sensitivity: high</option></select>
+    <div class="meter" title="Input level"><i id="lvl"></i></div><span id="lvltxt"></span>
+  </div>
+  <div id="status">Not listening.</div>
+  <div id="summary"><div class="now">Press Start listening.</div><div class="past">Tone boxes need about 10 seconds before they can light; speech boxes about 6.</div></div>
+  <div class="grid" id="grid"></div>
+
+  <h3>Timeline <select id="span" aria-label="Timeline length"><option value="600">Last 10 minutes</option><option value="3600">Last hour</option><option value="28800">Last 8 hours</option></select></h3>
+  <canvas id="tl"></canvas>
+  <div class="cap">One row per box. A coloured bar means that sound was being heard. Regular gaps show up as evenly spaced bars.</div>
+
+  <h3>Live picture of the sound</h3>
+  <div class="wf"><canvas id="water"></canvas><div id="wfax"></div></div>
+  <div class="cap">Time runs left to right, newest at the right edge. Pitch runs bottom (50 Hz) to top (20 kHz). Brighter is louder. Steady tones are horizontal lines, speech is wobbling stripes low down, clicks are vertical lines.</div>
+  <canvas id="spec"></canvas>
+  <div class="cap">Averaged spectrum, 20 Hz to 20 kHz. Orange: one microphone. Blue: sound common to both microphones, which reveals faint tones under the microphone hiss.</div>
+
+  <h3>Steady tones right now</h3>
+  <div id="tones"><i class="f">none yet</i></div>
+
+  <h3>Log</h3>
+  <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
+  <div class="tools">
+    <button id="snap" disabled>Save the last 30 seconds as a clip</button>
+    <button id="zip" disabled>Export labelled clips (.zip)</button>
+    <button id="csv">Save log (CSV)</button>
+    <button id="clear">Clear log</button>
+  </div>
+  <div class="cap">Clips are kept for muffled speech, alarm-type tones, low rumbles and anything you save by hand. They are amplified so quiet sounds are audible, and the amount is in the file name. Clips live only in this tab until you download them. Listening pauses while a clip plays.</div>
+  <div class="cap"><b>Teach it:</b> play a clip, then pick what it was. Export the labelled clips and send them back for retraining. Every label improves the next model.</div>
+  <audio id="player"></audio>
+</main>
+<script>

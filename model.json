@@ -1,0 +1,48 @@
+{
+ "version": "2026-11-17a",
+ "trained_on": "11445 rows: 12 voices through 800/500/350 Hz walls and clear at +5/0 dB in real room noise, 12 noise beds, 5 real recordings",
+ "HI_MUFFLED": 0.06,
+ "logit": {
+  "voicePresent": {
+   "w": {
+    "rhythm": 0.9862,
+    "slow": -0.4095,
+    "voiced": 6.0159,
+    "voicedAll": -1.5614,
+    "f0Spread": 0.527,
+    "envMean": 1.0394,
+    "envRange": 1.387,
+    "combMean": -8.2573,
+    "combP90": 2.1871
+   },
+   "b": -0.2165,
+   "mean": {
+    "rhythm": 1.44497,
+    "slow": 0.9764,
+    "voiced": 0.05758,
+    "voicedAll": 0.06748,
+    "f0Spread": 0.20955,
+    "envMean": 1.77282,
+    "envRange": 5.46446,
+    "combMean": 0.72811,
+    "combP90": 2.28689
+   },
+   "sd": {
+    "rhythm": 0.79995,
+    "slow": 0.97319,
+    "voiced": 0.09597,
+    "voicedAll": 0.11721,
+    "f0Spread": 0.34978,
+    "envMean": 2.2883,
+    "envRange": 3.41337,
+    "combMean": 1.09319,
+    "combP90": 3.03119
+   },
+   "thr": [
+    0.996,
+    0.992,
+    0.973
+   ]
+  }
+ }
+}

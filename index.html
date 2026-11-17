@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#111417">
+<link rel="icon" href="data:,">
 <title>Sound Spotter</title>
 <style>
   :root { --bg:#111417; --panel:#1a1f24; --line:#2a3139; --text:#e6e9ec; --dim:#8b96a1; --accent:#ffb347; }
@@ -51,6 +52,7 @@
   th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); z-index:1; }
   td.d { white-space:normal; color:var(--dim); }
   td.c button, td.c a { padding:3px 9px; font-size:12px; border-radius:5px; text-decoration:none; color:var(--text); background:#232a31; border:1px solid var(--line); display:inline-block; margin-right:4px; }
+  td.c select.lab { padding:3px 6px; font-size:12px; max-width:150px; border-radius:5px; } td.c select.lab.set { border-color:var(--accent); color:var(--accent); }
   td i.sw { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; }
   .meter { flex:1; min-width:120px; height:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
   .meter i { display:block; height:100%; width:0; background:var(--accent); }
@@ -65,14 +67,14 @@
     .box { padding:10px 11px; min-height:104px; } .box h2 { font-size:14px; } .box .what { font-size:12px; } .box .dot { top:12px; right:11px; }
     #water { height:200px; } #spec { height:110px; }
     th, td { padding:6px 8px; font-size:12px; white-space:normal; } th:nth-child(2), td:nth-child(2) { white-space:nowrap; }
-    .tools button { flex:1 1 45%; }
+    .tools button { flex:1 1 45%; } td.c select.lab { max-width:118px; margin-top:4px; }
   }
 </style>
 </head>
 <body>
 <main>
   <h1>Sound Spotter</h1>
-  <p class="sub">Listens through the microphone, lights a box for each kind of sound it recognises, and keeps short clips of the interesting ones so you can check them by ear.</p>
+  <p class="sub">Listens through the microphone, lights a box for each kind of sound it recognises, and keeps short clips of the interesting ones so you can check them by ear and teach it what they were.</p>
   <div class="bar">
     <button id="go" class="primary">Start listening</button>
     <select id="mic" aria-label="Microphone"></select>
@@ -100,10 +102,12 @@
   <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
   <div class="tools">
     <button id="snap" disabled>Save the last 30 seconds as a clip</button>
+    <button id="zip" disabled>Export labelled clips (.zip)</button>
     <button id="csv">Save log (CSV)</button>
     <button id="clear">Clear log</button>
   </div>
   <div class="cap">Clips are kept for muffled speech, alarm-type tones, low rumbles and anything you save by hand. They are amplified so quiet sounds are audible, and the amount is in the file name. Clips live only in this tab until you download them. Listening pauses while a clip plays.</div>
+  <div class="cap"><b>Teach it:</b> play a clip, then pick what it was. Export the labelled clips and send them back for retraining. Every label improves the next model.</div>
   <audio id="player"></audio>
 </main>
 <script>
@@ -153,12 +157,13 @@ class Spotter {
     this.powDb = new Float32Array(h); this.cohDb = new Float32Array(h); this.longCount = 0;
     this.stereo = null; this.diffAcc = 0; this.sumAcc = 0;
     this.st = {}; // detector states: {on, text}
-    for (const id of ['speech', 'rhythm', 'pitch', 'whine', 'hum100', 'hum50', 'plant346', 'buzz501', 'fan', 'other', 'rumble', 'click', 'alarm']) this.st[id] = { on: false, text: '', streak: 0, miss: 0 };
+    for (const id of ['speech', 'voice', 'near', 'rhythm', 'pitch', 'whine', 'hum100', 'hum50', 'plant346', 'buzz501', 'fan', 'other', 'rumble', 'click', 'alarm']) this.st[id] = { on: false, text: '', streak: 0, miss: 0 };
     this.b1 = []; this.b2 = []; this.rumRun = 0; this.rumOff = 0;
     this.sub = []; this.prevX = 0; this.hpY = 0; this.lpZ = 0; this.hpA = 1 / (1 + 2 * Math.PI * 300 / sr); this.lpB = 1 - Math.exp(-2 * Math.PI * 4000 / sr); this.clickHold = 0;
     this.alF = -1; this.alRun = 0; this.alHold = 0;
     this.hopV = Math.round(sr * 0.05); this.sinceV = 0; this.vBase = null; this.vInit = 0; this.envHist = []; this.f0Hist = []; this.clkHist = [];
     this.rhythm = 0; this.voicedN = 0; this.f0Med = 0; this.f0Iqr = 0; this.rhyRun = 0; this.spHold = 0; this.vDbg = null;
+    this.bestHist = []; this.pHist = []; this.learnRun = 0; this.pVoice = null; this.fv = null; this.hiHist = []; this.loHist = []; this.hiRatio = 0; this.silero = 0; this.sileroOn = false; this.sileroAt = -9; this.sileroRun = 0; this.voHold = 0; this.nearHold = 0; this.nearRun = 0; this.bursts = []; this.HI_MUFFLED = 0.06; this.logit = null;
     this.otherF = -1; this.lastEvent = -100; this.shortSeq = 0; this.toneTrack = new Map(); this.steadyTones = []; this.setSensitivity(1); this.shortDb = new Float32Array(this.NS / 2); this.level = -120;
   }
   push(l, r) {
@@ -267,18 +272,27 @@ class Spotter {
     // rumble / vehicle swell
     const v1 = band(200, 1000), v2 = band(2500, 8000), ru = this.st.rumble;
     const base1 = this.b1.length > 50 ? pct(this.b1, 0.3) : v1, base2 = this.b2.length > 50 ? pct(this.b2, 0.3) : v2;
-    const up = v1 - base1, hi = v2 - base2;
-    if (up >= this.K.rumble && hi < 4 && this.b1.length > 50 && (ru.on || this.rhythm < 2.0) && !this.st.speech.on) { this.rumRun++; this.rumOff = 0; } else { this.rumOff++; if (this.rumOff > 3) this.rumRun = 0; }
+    const up = v1 - base1, hi = v2 - base2; this.lastUp = up; this.lastHi = hi;
+    if (up >= this.K.rumble && hi < 4 && this.b1.length > 50 && (ru.on || this.rhythm < 2.0) && !this.st.speech.on && !this.st.voice.on && !this.st.near.on) { this.rumRun++; this.rumOff = 0; } else { this.rumOff++; if (this.rumOff > 3) this.rumRun = 0; }
     if (this.rumRun >= 12) { if (!ru.on) this.rumPk = 0; ru.on = true; this.rumPk = Math.max(this.rumPk, up); ru.text = `low-frequency swell · peak +${this.rumPk.toFixed(0)} dB`; }
     if (ru.on && this.rumOff >= 15) ru.on = false;
     if (!ru.on || this.b1.length < 100) { this.b1.push(v1); this.b2.push(v2); if (this.b1.length > 900) { this.b1.shift(); this.b2.shift(); } }
     // alarm-type tone 1.5–5 kHz
     const k1 = this.bin(1500, NS), k2 = this.bin(5000, NS); let pk = -1e9, kp = k1;
     for (let k = k1; k <= k2; k++) if (this.shortDb[k] > pk) { pk = this.shortDb[k]; kp = k; }
-    const pr = pk - median(this.shortDb.subarray(k1, k2 + 1)), al = this.st.alarm;
-    if (pr >= this.K.alarm && !clicked && Math.abs(kp - this.alF) <= 3) this.alRun++; else this.alRun = pr >= this.K.alarm && !clicked ? 1 : 0;
+    const pr = pk - median(this.shortDb.subarray(k1, k2 + 1)), al = this.st.alarm, ne = this.st.near; this.lastPr = pr;
+    // something close to the microphone: a broadband jump in the highs that is not a tone (handling, rustle, a cough, typing)
+    const tonal = pr >= this.K.alarm;
+    if (hi >= 10 && !tonal && this.b1.length > 50) this.nearRun++; else this.nearRun = Math.max(0, this.nearRun - 1);
+    if (this.nearRun >= 2) { this.nearHold = 20; ne.text = `broadband sound close to the microphone · highs +${hi.toFixed(0)} dB`; this.nearRun = 2; }
+    ne.on = this.nearHold > 0; if (this.nearHold > 0) this.nearHold--;
+    // an alarm holds one pitch (0.6 s or more) or repeats the same pitch; a blip at a new pitch each time is not one
+    const same = tonal && !clicked && Math.abs(kp - this.alF) <= 3;
+    if (same) this.alRun++;
+    else { if (this.alRun >= 2) { this.bursts.push({ t: this.t, k: this.alF }); if (this.bursts.length > 30) this.bursts.shift(); } this.alRun = tonal && !clicked ? 1 : 0; }
     this.alF = kp;
-    if (this.alRun >= 3) { this.alHold = 15; al.text = `${(kp * this.sr / NS).toFixed(0)} Hz tone · ${pr.toFixed(0)} dB above background`; }
+    const rep = this.bursts.filter(b => this.t - b.t < 12 && Math.abs(b.k - kp) <= 3).length;
+    if ((this.alRun >= 6 || (this.alRun >= 2 && rep >= 2)) && !ne.on) { this.alHold = 20; al.text = `${(kp * this.sr / NS).toFixed(0)} Hz tone · ${pr.toFixed(0)} dB above background · ${this.alRun >= 6 ? 'held' : 'repeating'}`; }
     al.on = this.alHold > 0; if (this.alHold > 0) this.alHold--;
     this.shortSeq++;
   }
@@ -289,7 +303,7 @@ Spotter.prototype.voiceFrame = function (back) {
   const NS = this.NS, re = this.latest(this.L, NS, back), r2 = this.latest(this.R, NS, back), im = new Float64Array(NS);
   for (let i = 0; i < NS; i++) re[i] = (re[i] + r2[i]) / 2 * this.winS[i];
   fft(re, im);
-  const kLo = this.bin(70, NS), kHi = this.bin(1300, NS), n = kHi - kLo + 1, P = new Float64Array(n);
+  const kLo = this.bin(70, NS), kHi = this.bin(4000, NS), n = kHi - kLo + 1, P = new Float64Array(n);
   for (let i = 0; i < n; i++) { let a = 0; for (let j = -1; j <= 1; j++) { const k = kLo + i + j; a += re[k] * re[k] + im[k] * im[k]; } P[i] = a / 3; }
   if (!this.vBase) { this.vBase = Float64Array.from(P); this.vInit = 1; return; }
   const B = this.vBase;
@@ -299,9 +313,15 @@ Spotter.prototype.voiceFrame = function (back) {
   for (let i = i1; i <= i2; i++) { sp += P[i]; sb += B[i]; }
   const env = dB(sp / sb), quiet = env < 1.0;
   const al = quiet ? 0.02 : 0.0005; for (let i = 0; i < n; i++) B[i] += al * (P[i] - B[i]);
+  // the wall signature (voicehunter, F-0590): what a wall lets through is everything under ~800 Hz and nothing above
+  const j1 = this.bin(100, NS) - kLo, j2 = this.bin(800, NS) - kLo; let exLo = 0, exHi = 0;
+  for (let i = j1; i < j2; i++) exLo += Math.max(0, P[i] - 2 * B[i]);
+  for (let i = j2; i < n; i++) exHi += Math.max(0, P[i] - 2 * B[i]);
+  this.loHist.push(exLo); this.hiHist.push(exHi); if (this.loHist.length > 60) { this.loHist.shift(); this.hiHist.shift(); }
+  { let a = 0, b = 0; for (let i = 0; i < this.loHist.length; i++) { a += this.loHist[i]; b += this.hiHist[i]; } this.hiRatio = a > 0 ? b / a : 0; }
   // harmonic comb on the excess spectrum
   const E = new Float64Array(n); for (let i = 0; i < n; i++) E[i] = Math.max(0, Math.min(20, dB(P[i] / B[i])));
-  const hzb = this.sr / NS, at = f => { const x = f / hzb - kLo; if (x < 0 || x >= n - 1) return 0; const i = Math.floor(x), fr = x - i; return E[i] * (1 - fr) + E[i + 1] * fr; };
+  const hzb = this.sr / NS, nC = this.bin(1300, NS) - kLo, at = f => { const x = f / hzb - kLo; if (x < 0 || x >= nC - 1) return 0; const i = Math.floor(x), fr = x - i; return E[i] * (1 - fr) + E[i + 1] * fr; };
   let best = 0, bf = 0, bh = 0;
   for (let f0 = 75; f0 <= 300; f0 += 1) {
     const H = Math.min(8, Math.floor(1250 / f0)); let on = 0, off = 0, strong = 0;
@@ -312,8 +332,8 @@ Spotter.prototype.voiceFrame = function (back) {
   }
   const clickNow = this.t - (this.lastClick || -9) < 0.3;
   const voiced = best >= this.K.voiced && !clickNow;
-  this.envHist.push(env); this.f0Hist.push(voiced ? bf : 0);
-  if (this.envHist.length > 80) { this.envHist.shift(); this.f0Hist.shift(); }
+  this.envHist.push(env); this.f0Hist.push(voiced ? bf : 0); this.bestHist.push(best);
+  if (this.envHist.length > 80) { this.envHist.shift(); this.f0Hist.shift(); this.bestHist.shift(); }
   if (this.envHist.length < 80) return;
   // syllable rhythm: rms of the 2–8 Hz part of the level envelope (dB), 4 s window at 20 Hz
   const N = 80, x = this.envHist; let mx = 0; for (let i = 0; i < N; i++) mx += x[i]; mx /= N;
@@ -332,8 +352,46 @@ Spotter.prototype.voiceFrame = function (back) {
   R.on = this.rhyRun >= 30 || (R.on && calm && this.rhythm >= this.RHY_ON * 0.85); if (R.on) { this.rhyPk = Math.max(this.rhyPk || 0, this.rhythm); R.text = `syllable-rate pulsing · up to ${this.rhyPk.toFixed(1)} dB swing at 2–8 Hz`; } else this.rhyPk = 0;
   Pi.on = (pOk || (Pi.on && calm && this.voicedN >= 4)) && !(this.st.rumble.on && !R.on); /* an engine's harmonics are not a voice */ if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
   this.bothRun = R.on && Pi.on ? (this.bothRun || 0) + 1 : 0;
-  if (this.bothRun >= 40) this.spHold = 60; else if (this.spHold > 0) this.spHold--;
-  S.on = this.spHold > 0; if (R.on && Pi.on) S.text = `voice pitch about ${this.f0Med.toFixed(0)} Hz with speech rhythm`;
+  // feature vector for the learned voice-presence score (trained offline on the harness; weights arrive in model.json)
+  { const e2 = x.slice(40), srt = Float64Array.from(x).sort(), bs = Float64Array.from(this.bestHist).sort(); let em = 0; for (const v of e2) em += v; em /= e2.length; let bm = 0; for (const v of bs) bm += v; bm /= bs.length;
+    this.fv = { rhythm: this.rhythm, slow, voiced: this.voicedN / 80, voicedAll: this.voicedAll / 80, f0Spread: Math.min(60, this.f0Iqr) / 60, envMean: em, envRange: srt[72] - srt[8], combMean: bm, combP90: bs[72], logHi: Math.log10(Math.min(1, this.hiRatio) + 0.01) };
+    const p = this.learned('voicePresent', this.fv);
+    if (p !== null) { this.pHist.push(p); if (this.pHist.length > 20) this.pHist.shift(); let a = 0; for (const v of this.pHist) a += v; this.pVoice = a / this.pHist.length;
+      const thr = this.logit.voicePresent.thr[this.sens];
+      if (this.pVoice >= thr && !this.st.rumble.on) this.learnRun = Math.min(60, this.learnRun + 1); else this.learnRun = Math.max(0, this.learnRun - 2); } }
+  const V = this.st.voice, sil = this.t - this.sileroAt < 1.0 ? this.silero : 0, nearNow = this.st.near.on;
+  if (sil >= 0.5) this.sileroRun = Math.min(40, this.sileroRun + 1); else this.sileroRun = Math.max(0, this.sileroRun - 1);
+  // three independent votes that a voice is present: the hand rules, the learned score, and the Silero voice model
+  const evid = this.bothRun >= 40 || this.learnRun >= 30 || this.sileroRun >= 10, heard = this.sileroRun >= 6;
+  // muffled or clear is decided by the highs alone (the wall signature). Once an event reads as through-wall it takes clearly more highs to change its mind.
+  const clear = evid && this.hiRatio >= (this.spHold > 0 ? 2 : 1) * this.HI_MUFFLED;
+  if (evid && !clear && !nearNow) this.spHold = 60; else if (this.spHold > 0) this.spHold--;
+  // a clear voice is the voice model's home ground (12/12 on the harness): if it is running and hears nothing, this is not a voice
+  if (evid && clear && (heard || !this.sileroOn)) this.voHold = 60; else if (this.voHold > 0) this.voHold--;
+  if (evid && clear && this.sileroOn && !heard && this.voHold === 0) { this.nearHold = Math.max(this.nearHold, 10); this.st.near.text = 'voice-like sound with highs, but the voice model hears no voice'; }
+  if (this.voHold > 0 && this.spHold > 0 && clear) this.spHold = 0;         // it turned out to be a clear voice
+  S.on = this.spHold > 0;
+  if (S.on && evid) S.text = `through-wall signature · pitch about ${this.f0Med.toFixed(0)} Hz, speech rhythm, almost nothing above 800 Hz (${(this.hiRatio * 100).toFixed(0)}%)` + (this.pVoice !== null ? ` · learned score ${(this.pVoice * 100).toFixed(0)}%` : '') + (this.sileroOn ? ` · voice model ${heard ? 'agrees' : 'silent'}` : '');
+  V.on = this.voHold > 0;
+  if (V.on && evid && clear) V.text = `clear voice or TV in the room · highs ${(this.hiRatio * 100).toFixed(0)}% of lows` + (this.sileroOn ? ' · voice model agrees' : '') + (this.f0Med ? ` · pitch about ${this.f0Med.toFixed(0)} Hz` : '');
+};
+// what the detector was measuring: kept with every logged event so labelled events can train the model
+Spotter.prototype.snapshot = function () {
+  const r = v => Math.round(v * 1000) / 1000;
+  return { level: r(this.level), hiRatio: r(this.hiRatio), rhythm: r(this.rhythm), rhythmPk: r(this.rhyPk || 0), voicedN: this.voicedN, voicedAll: this.voicedAll || 0, f0: this.f0Med, f0Spread: this.f0Iqr,
+    silero: r(this.t - this.sileroAt < 1.0 ? this.silero : 0), rumbleUp: r(this.lastUp || 0), hiUp: r(this.lastHi || 0), tonePr: r(this.lastPr || 0), near: this.st.near.on ? 1 : 0, stereo: this.stereo ? 1 : 0 };
+};
+// model.json: thresholds (and later, learned weights) that change the detector without a code change
+Spotter.prototype.applyModel = function (m) {
+  if (!m) return; this.model = m;
+  if (m.K && m.K[this.sens]) Object.assign(this.K, m.K[this.sens]);
+  if (m.RHY_ON) this.RHY_ON = m.RHY_ON[this.sens]; if (m.HI_MUFFLED) this.HI_MUFFLED = m.HI_MUFFLED;
+  this.logit = m.logit || null;
+};
+Spotter.prototype.learned = function (kind, snap) {   // -> probability the event is real, or null if nothing has been learned for it
+  const L = this.logit && this.logit[kind]; if (!L) return null;
+  let z = L.b; for (const k in L.w) z += L.w[k] * (((snap[k] || 0) - (L.mean[k] || 0)) / (L.sd[k] || 1));
+  return 1 / (1 + Math.exp(-z));
 };
 Spotter.prototype.RHY_ON = 1.6;
 
@@ -368,11 +426,14 @@ Spotter.prototype.setSensitivity = function (l) {
   this.sens = l;
   this.K = { tonePow: [7, 6, 5][l], toneCoh: [9, 8, 7][l], rumble: [6, 5, 4][l], click: [14, 12, 10][l], alarm: [18, 15, 12][l], voiced: [5.5, 4.5, 4][l] };
   this.RHY_ON = [1.9, 1.6, 1.4][l];
+  if (this.model) this.applyModel(this.model);
 };
 if (typeof module !== 'undefined') module.exports = { Spotter, fft };
 // ---- UI ----
 const BOXES = [
-  { id:'speech',   name:'Muffled speech',    what:'Voice pitch and speech rhythm together',     c:'#ff7ab6' },
+  { id:'speech',   name:'Muffled speech',    what:'Through-wall voice: pitch and rhythm, no highs', c:'#ff7ab6' },
+  { id:'voice',    name:'Voice in the room', what:'Clear voice or TV, highs intact',             c:'#7ab8ff' },
+  { id:'near',     name:'Nearby sound',      what:'Handling, rustle or movement close to the mic', c:'#b7c0c9' },
   { id:'rhythm',   name:'Speech rhythm',     what:'Loudness pulsing at syllable rate, 2–8 Hz',  c:'#f5a3c7' },
   { id:'pitch',    name:'Voice pitch',       what:'Moving harmonic pitch, 75–300 Hz',           c:'#e0b3ff' },
   { id:'alarm',    name:'Alarm-type tone',   what:'Strong tone or beeping, 1.5–5 kHz',          c:'#ff5d5d' },
@@ -389,7 +450,10 @@ const BOXES = [
 const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
-const CLIP_IDS = new Set(['speech', 'alarm', 'rumble']);
+const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
+const VERSION = 'v3';
+const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
+let MODEL = {"version":"2026-11-17a","trained_on":"11445 rows: 12 voices through 800/500/350 Hz walls and clear at +5/0 dB in real room noise, 12 noise beds, 5 real recordings","HI_MUFFLED":0.06,"logit":{"voicePresent":{"w":{"rhythm":0.9862,"slow":-0.4095,"voiced":6.0159,"voicedAll":-1.5614,"f0Spread":0.527,"envMean":1.0394,"envRange":1.387,"combMean":-8.2573,"combP90":2.1871},"b":-0.2165,"mean":{"rhythm":1.44497,"slow":0.9764,"voiced":0.05758,"voicedAll":0.06748,"f0Spread":0.20955,"envMean":1.77282,"envRange":5.46446,"combMean":0.72811,"combP90":2.28689},"sd":{"rhythm":0.79995,"slow":0.97319,"voiced":0.09597,"voicedAll":0.11721,"f0Spread":0.34978,"envMean":2.2883,"envRange":3.41337,"combMean":1.09319,"combP90":3.03119},"thr":[0.996,0.992,0.973]}}};
 const $ = id => document.getElementById(id);
 const els = {}, live = {};
 for (const b of BOXES) {
@@ -405,7 +469,7 @@ const fmtHz = f => f < 1000 ? f.toFixed(0) + ' Hz' : (f / 1000).toFixed(2) + ' k
 let ctx, stream, node, sp, running = false, paused = false, startedAt = 0, statusBase = '', wake = null;
 let rows = [], dirty = false, clips = [], pending = [];
 let ring = null, ringN = 0, rw = 0, tot = 0, lastSeq = 0, lastSec = -1;
-const KEY = 'soundspotter.log.v2';
+const KEY = 'soundspotter.log.v3';
 
 // ---------- log ----------
 function addRowDom(r) {
@@ -414,7 +478,7 @@ function addRowDom(r) {
   tr.children[3].textContent = r.d || ''; r.tr = tr; $('log').prepend(tr);
   while ($('log').children.length > 300) { const last = $('log').lastChild; last.remove(); }
 }
-function save() { if (!dirty) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(rows.slice(-2000).map(r => ({ s: r.s, e: r.e, id: r.id, d: r.d })))); } catch (e) {} }
+function save() { if (!dirty) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(rows.slice(-2000).map(r => ({ s: r.s, e: r.e, id: r.id, d: r.d, label: r.label, f: r.f })))); } catch (e) {} }
 try { for (const r of JSON.parse(localStorage.getItem(KEY) || '[]')) { if (!r.e) r.e = r.s; rows.push(r); } rows.slice(-300).forEach(addRowDom); } catch (e) {}
 
 function transitions(now) {
@@ -431,6 +495,7 @@ function transitions(now) {
       el.querySelector('.last').textContent = `Last heard ${clock(now)} · ${l.count} time${l.count > 1 ? 's' : ''}`;
     }
     const nowEl = el.querySelector('.now');
+    if (s.on && l.row && (!l.row.f || sp.rhythm >= (l.row.f.rhythm || 0))) l.row.f = Object.assign(sp.snapshot(), sp.fv ? { fv: Object.assign({}, sp.fv) } : {}, sp.pVoice !== null ? { learned: Math.round(sp.pVoice * 1000) / 1000 } : {});
     if (s.on) { if (nowEl.textContent !== s.text) { nowEl.textContent = s.text; l.row.d = s.text; if (l.row.tr) l.row.tr.children[3].textContent = s.text; } }
     else if (nowEl.textContent) nowEl.textContent = '';
   }
@@ -455,7 +520,11 @@ function makeClip(x, r) {
   const clip = { url: URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })), name, r }; r.clip = clip; clips.push(clip);
   if (r.tr) {
     const c = r.tr.children[4], play = document.createElement('button'), a = document.createElement('a');
-    play.textContent = '▶ Play'; play.onclick = () => playClip(clip, play); a.textContent = 'Save'; a.href = clip.url; a.download = name; c.append(play, a);
+    play.textContent = '▶ Play'; play.onclick = () => playClip(clip, play); a.textContent = 'Save'; a.href = clip.url; a.download = name;
+    const sel = document.createElement('select'); sel.className = 'lab'; sel.setAttribute('aria-label', 'What was this?');
+    sel.innerHTML = '<option value="">What was it?</option>' + LABELS.map(l => `<option>${l}</option>`).join('');
+    sel.value = r.label || ''; sel.onchange = () => { r.label = sel.value || undefined; sel.classList.toggle('set', !!r.label); dirty = true; save(); countLabels(); };
+    c.append(play, a, sel);
   }
   while (clips.length > 24) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
 }
@@ -466,6 +535,28 @@ function playClip(clip, btn) {
   playingBtn = btn; btn.textContent = '■ Stop'; paused = true; player.src = clip.url; player.play().catch(() => {});
 }
 player.onpause = player.onended = () => { if (playingBtn) playingBtn.textContent = '▶ Play'; setTimeout(() => { if (player.paused) paused = false; }, 500); };
+function countLabels() { const n = rows.filter(r => r.label).length, m = rows.filter(r => r.label && r.clip).length; $('zip').textContent = n ? `Export labelled clips (${m} of ${n} still in this tab)` : 'Export labelled clips (.zip)'; $('zip').disabled = !m; }
+// minimal ZIP writer (stored, no compression) so the labelled set leaves the page as one file
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+function zip(files) {
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  for (const f of files) { const nm = enc.encode(f.name), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, nm.length, true);
+    parts.push(new Uint8Array(h.buffer), nm, f.data);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    cen.push(new Uint8Array(c.buffer), nm); off += 30 + nm.length + f.data.length; }
+  let cs = 0; for (const p of cen) cs += p.length; const e = new DataView(new ArrayBuffer(22)); e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, cs, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(e.buffer)], { type: 'application/zip' });
+}
+$('zip').onclick = async () => {
+  const lab = rows.filter(r => r.label), files = [];
+  for (const r of lab) if (r.clip) files.push({ name: r.clip.name, data: new Uint8Array(await (await fetch(r.clip.url)).arrayBuffer()) });
+  const meta = { app: 'Sound Spotter ' + VERSION, model: MODEL.version, exported: new Date().toISOString(), device: navigator.userAgent, mic: statusBase.replace(/<[^>]+>/g, ''), stereo: sp ? sp.stereo : null,
+    events: lab.map(r => ({ start: new Date(r.s).toISOString(), end: r.e ? new Date(r.e).toISOString() : null, detector: r.id, detail: r.d, label: r.label, clip: r.clip ? r.clip.name : null, features: r.f || null })) };
+  files.push({ name: 'labels.json', data: new TextEncoder().encode(JSON.stringify(meta, null, 1)) });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-labelled_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
+};
 $('snap').onclick = () => { if (!running) return; const x = cut(tot - 30 * sp.sr, tot); if (!x) return; const now = Date.now(), r = { s: now - x.length / sp.sr * 1000, e: now, id: 'manual', d: 'the last ' + Math.round(x.length / sp.sr) + ' seconds' }; rows.push(r); addRowDom(r); makeClip(x, r); dirty = true; };
 
 // ---------- live spectrogram ----------
@@ -519,6 +610,7 @@ function summary(now) {
   const total = rs => fmtDur(rs.reduce((a, r) => a + ((r.e || now) - Math.max(r.s, since)) / 1000, 0));
   const parts = [], sp_ = inWin('speech'), al = inWin('alarm'), ru = inWin('rumble'), ck = inWin('click'), ot = inWin('other');
   parts.push(sp_.length ? `<b>muffled speech ${sp_.length}× (${total(sp_)})</b>` : 'no muffled speech');
+  const vo = inWin('voice'); if (vo.length) parts.push(`voice in the room ${vo.length}× (${total(vo)})`);
   parts.push(al.length ? `<b>alarm-type tone ${al.length}× (${total(al)})</b>` : 'no alarm-type tones');
   if (ru.length) parts.push(`<b>low rumble ${ru.length}×</b>${every(ru)}`);
   if (ck.length) parts.push(`${ck.length} click${ck.length > 1 ? 's' : ''} or knock${ck.length > 1 ? 's' : ''}${every(ck)}`);
@@ -531,11 +623,55 @@ function summary(now) {
   $('tones').innerHTML = tones.length ? tones.map(t => `<i class="${t.faint ? 'f' : ''}">${fmtHz(t.f)}${t.faint ? ' · faint' : ''}</i>`).join('') : '<i class="f">none yet</i>';
 }
 
+// ---------- Silero VAD (the small trained voice model; runs only when the page is served over http/https) ----------
+const vad = { ok: false, sess: null, state: null, ctx: new Float32Array(64), q: [], busy: false, buf: new Float32Array(512), n: 0, ratio: 3, pos: 0, prev: 0, z: [0, 0, 0, 0], co: null, rms: 1e-4 };
+function vadReset(sr) {
+  vad.ratio = sr / 16000; vad.pos = 0; vad.n = 0; vad.q = []; vad.prev = 0; vad.z = [0, 0, 0, 0]; vad.rms = 1e-4; vad.ctx.fill(0); if (vad.ok) vad.state = new ort.Tensor('float32', new Float32Array(256), [2, 1, 128]);
+  const w0 = 2 * Math.PI * 7000 / sr, mk = Q => { const al = Math.sin(w0) / (2 * Q), c = Math.cos(w0), a0 = 1 + al; return [(1 - c) / 2 / a0, (1 - c) / a0, (1 - c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; };
+  vad.co = [mk(0.5412), mk(1.3066)]; vad.h = [0, 0];
+  { const w = 2 * Math.PI * 150 / 16000, al = Math.sin(w) / (2 * 0.7071), c = Math.cos(w), a0 = 1 + al; vad.hp = [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0]; }   // 4th-order Butterworth low-pass at 7 kHz ahead of the 16 kHz resample
+}
+async function vadInit() {
+  if (!/^https?:$/.test(location.protocol)) return;
+  try {
+    await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'vad/ort.wasm.min.js'; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
+    ort.env.wasm.wasmPaths = new URL('vad/', location.href).href; ort.env.wasm.numThreads = 1;
+    vad.sess = await ort.InferenceSession.create('vad/silero_vad_16k.onnx'); vad.srT = new ort.Tensor('int64', BigInt64Array.from([16000n]), []);
+    vad.state = new ort.Tensor('float32', new Float32Array(256), [2, 1, 128]); vad.ok = true;
+  } catch (e) { vad.ok = false; }
+}
+async function vadPump() {
+  if (vad.busy) return; vad.busy = true;
+  try { while (vad.q.length) { const fr = vad.q.shift(), inp = new Float32Array(576); inp.set(vad.ctx); inp.set(fr, 64);
+      const out = await vad.sess.run({ input: new ort.Tensor('float32', inp, [1, 576]), state: vad.state, sr: vad.srT });
+      vad.state = out.stateN; vad.ctx = fr.slice(448); if (sp) { sp.silero = out.output.data[0]; sp.sileroAt = sp.t; } } }
+  catch (e) { vad.ok = false; }
+  vad.busy = false;
+}
+function vadFeed(l, r) {
+  if (!vad.ok) return; const n = l.length, z = vad.z, [A, B] = vad.co;
+  for (let i = 0; i < n; i++) {
+    let x = r ? (l[i] + r[i]) * 0.5 : l[i];
+    let y = A[0] * x + z[0]; z[0] = A[1] * x - A[3] * y + z[1]; z[1] = A[2] * x - A[4] * y; x = y;
+    y = B[0] * x + z[2]; z[2] = B[1] * x - B[3] * y + z[3]; z[3] = B[2] * x - B[4] * y;
+    vad.pos += 1;
+    while (vad.pos >= vad.ratio) { vad.pos -= vad.ratio; const fr = 1 - vad.pos, u0 = vad.prev + (y - vad.prev) * Math.min(1, Math.max(0, fr)), H = vad.hp;
+      const v = H[0] * u0 + vad.h[0]; vad.h[0] = H[1] * u0 - H[3] * v + vad.h[1]; vad.h[1] = H[2] * u0 - H[4] * v;   // 150 Hz high-pass: without it the room's hum sets the level and the model hears nothing
+      vad.rms += 0.00002 * (v * v - vad.rms);                                         // slow level estimate (about 3 s)
+      vad.buf[vad.n++] = v * Math.min(100, 0.05 / Math.sqrt(vad.rms + 1e-12));        // level the quiet room up to where the model was trained
+      if (vad.n === 512) { if (vad.q.length < 60) vad.q.push(vad.buf.slice()); vad.n = 0; } }
+    vad.prev = y;
+  }
+  vadPump();
+}
+vadInit();
+if (/^https?:$/.test(location.protocol)) fetch('model.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(m => { if (m && m.version) { MODEL = m; if (sp) sp.applyModel(m); } }).catch(() => {});
+
 // ---------- audio ----------
 function onChunk(l, r) {
   if (paused || !running) return;
   const n = l.length; for (let i = 0; i < n; i++) { ring[rw] = r ? (l[i] + r[i]) * 0.5 : l[i]; if (++rw === ringN) rw = 0; } tot += n;
-  sp.push(l, r); const now = Date.now(); transitions(now);
+  sp.sileroOn = vad.ok; vadFeed(l, r); sp.push(l, r); const now = Date.now(); transitions(now);
   for (let i = pending.length - 1; i >= 0; i--) { const p = pending[i]; if ((p.to !== null && tot >= p.to) || tot >= p.max) { pending.splice(i, 1); const x = cut(p.from, Math.min(tot, p.to === null ? p.max : p.to)); if (x) makeClip(x, p.r); } }
   if (sp.shortSeq !== lastSeq) { lastSeq = sp.shortSeq; waterColumn(); }
   const sec = Math.floor(sp.t); if (sec !== lastSec) { lastSec = sec; summary(now); drawTimeline(now); if (sec % 5 === 0) save(); }
@@ -555,7 +691,7 @@ async function start() {
     if (!before && $('mic').value && stream.getAudioTracks()[0].getSettings().deviceId !== $('mic').value) { stream.getTracks().forEach(t => t.stop()); stream = await navigator.mediaDevices.getUserMedia(want($('mic').value)); }
     const tr = stream.getAudioTracks()[0], set = tr.getSettings();
     ctx = new AudioContext({ sampleRate: set.sampleRate || 48000, latencyHint: 'playback' }); await ctx.resume();
-    sp = new Spotter(ctx.sampleRate); sp.setSensitivity(+$('sens').value);
+    sp = new Spotter(ctx.sampleRate); sp.applyModel(MODEL); sp.setSensitivity(+$('sens').value); vadReset(ctx.sampleRate);
     ringN = Math.round(ctx.sampleRate * 45); ring = new Float32Array(ringN); rw = 0; tot = 0; lastSeq = 0; lastSec = -1; pending = [];
     for (const b of BOXES) live[b.id].on = false;
     initWater();
@@ -591,14 +727,14 @@ let clearArmed = 0;
 $('clear').onclick = () => {
   if (Date.now() - clearArmed > 4000) { clearArmed = Date.now(); $('clear').textContent = 'Tap again to clear everything'; setTimeout(() => { $('clear').textContent = 'Clear log'; }, 4000); return; }
   clearArmed = 0; $('clear').textContent = 'Clear log'; for (const c of clips) URL.revokeObjectURL(c.url); clips = []; pending = [];
-  rows = rows.filter(r => !r.e); $('log').innerHTML = ''; rows.forEach(addRowDom); for (const b of BOXES) { live[b.id].count = live[b.id].on ? 1 : 0; if (!live[b.id].on) { els[b.id].classList.remove('recent'); els[b.id].querySelector('.last').textContent = 'Not heard yet'; } }
+  rows = rows.filter(r => !r.e); $('log').innerHTML = ''; setTimeout(countLabels, 0); rows.forEach(addRowDom); for (const b of BOXES) { live[b.id].count = live[b.id].on ? 1 : 0; if (!live[b.id].on) { els[b.id].classList.remove('recent'); els[b.id].querySelector('.last').textContent = 'Not heard yet'; } }
   try { localStorage.removeItem(KEY); } catch (e) {} drawTimeline(Date.now());
 };
 function draw() {
   if (!running) return; requestAnimationFrame(draw);
   $('lvl').style.width = Math.max(0, Math.min(100, (sp.level + 90) / 80 * 100)) + '%'; $('lvltxt').textContent = isFinite(sp.level) ? sp.level.toFixed(0) + ' dBFS' : '';
   const secs = Math.round((Date.now() - startedAt) / 1000), hh = Math.floor(secs / 3600), mm = String(Math.floor(secs / 60) % 60).padStart(2, '0'), ss = String(secs % 60).padStart(2, '0');
-  $('status').innerHTML = statusBase + (sp.stereo === null ? '' : sp.stereo ? ' · two microphones' : ' · one microphone channel') + ` · listening ${hh ? hh + ':' : ''}${mm}:${ss}` + (paused ? ' · <span class="warn">paused while a clip plays</span>' : sp.longCount < 6 ? ' · tone boxes warming up' : '');
+  $('status').innerHTML = statusBase + (sp.stereo === null ? '' : sp.stereo ? ' · two microphones' : ' · one microphone channel') + ` · listening ${hh ? hh + ':' : ''}${mm}:${ss}` + ` · model ${MODEL.version}${vad.ok ? ' + voice model' : ''}` + (paused ? ' · <span class="warn">paused while a clip plays</span>' : sp.longCount < 6 ? ' · tone boxes warming up' : '');
   const cv = $('spec'); if (cv.width !== cv.clientWidth * 2) { cv.width = cv.clientWidth * 2; cv.height = cv.clientHeight * 2; }
   const g = cv.getContext('2d'), W = cv.width / 2, H = cv.height / 2; g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
   const x = f => Math.log(f / 20) / Math.log(1000) * W;
@@ -614,7 +750,7 @@ function draw() {
   };
   if (sp.stereo) trace(sp.cohDb, '#4fc3d9'); trace(sp.powDb, '#ffb347');
 }
-drawTimeline(Date.now());
+countLabels(); drawTimeline(Date.now());
 if (navigator.mediaDevices) listMics().catch(() => {}); else $('status').innerHTML = '<span class="warn">This browser cannot open the microphone from this page. It needs to be opened over HTTPS.</span>';
 </script>
 </body>
