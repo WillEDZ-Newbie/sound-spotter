@@ -20,7 +20,7 @@ const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
 const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
-const VERSION = 'v4.1';
+const VERSION = 'v4.2';
 const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
 let MODEL = __MODEL__;
 const $ = id => document.getElementById(id);
@@ -225,6 +225,7 @@ function toneLevel(f, secs) {   // Goertzel on the newest audio
 function startCheck() {
   if (!running || check) return;
   const osc = ctx.createOscillator(), g = ctx.createGain(); osc.frequency.value = 1000; g.gain.value = 0; osc.connect(g); g.connect(ctx.destination); osc.start();
+  for (const b of BOXES) sp.st[b.id].on = false; transitions(Date.now());   // close anything that was lit, so it is not logged as lasting through the check
   check = { osc, g, phase: 0, t0: Date.now(), last: 0, v: [[], [], [], []], early: [] }; $('micbtn').textContent = 'Stop mic check';
 }
 function checkStep() {
@@ -232,7 +233,7 @@ function checkStep() {
   if (el >= CHECK[ph][1]) { ph = ++c.phase; c.t0 = now; el = 0; if (ph >= CHECK.length) return endCheck('done'); c.g.gain.setTargetAtTime(CHECK[ph][2], ctx.currentTime, 0.02); }
   if (now - c.last >= 250) { c.last = now; const lv = toneLevel(1000, 0.2), dur = CHECK[ph][1];
     if (ph === 3) { if (el >= 1.5 && el < 5) c.early.push(lv); if (el >= dur - 4) c.v[3].push(lv); } else if (el >= (ph ? 2 : 0.5)) c.v[ph].push(lv);
-    $('miccheck').textContent = `Mic check: ${['measuring the room', 'loud tone', 'quiet tone', 'holding the tone'][ph]}… ${Math.max(0, Math.ceil(dur - el))} s. Turn the volume up so you can hear it clearly.`; }
+    $('miccheck').textContent = `Mic check: ${['measuring the room', 'loud tone', 'quiet tone', 'holding the tone'][ph]}… ${Math.max(0, Math.ceil(dur - el))} s. Set the volume to about half: clearly audible, not loud.`; }
 }
 function endCheck(how) {
   const c = check; check = null; try { c.osc.stop(); } catch (e) {} $('micbtn').textContent = 'Mic check';
