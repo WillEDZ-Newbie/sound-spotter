@@ -20,7 +20,7 @@ const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
 const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
-const VERSION = 'v3.1';
+const VERSION = 'v4.0';
 const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
 let MODEL = __MODEL__;
 const $ = id => document.getElementById(id);
@@ -36,6 +36,7 @@ const fmtGap = s => s < 90 ? Math.round(s) + ' s' : Math.floor(s / 60) + ' min '
 const fmtHz = f => f < 1000 ? f.toFixed(0) + ' Hz' : (f / 1000).toFixed(2) + ' kHz';
 
 let ctx, stream, node, sp, running = false, paused = false, startedAt = 0, statusBase = '', wake = null;
+let micInfo = null, micChecks = [], check = null, hearing = null;
 let rows = [], dirty = false, clips = [], pending = [];
 let ring = null, ringN = 0, rw = 0, tot = 0, lastSeq = 0, lastSec = -1;
 const KEY = 'soundspotter.log.v3';
@@ -122,7 +123,7 @@ function zip(files) {
 $('zip').onclick = async () => {
   const lab = rows.filter(r => r.s >= startedAt - 1000 || r.label || r.clip), files = [];   // everything from this session: no labelling needed
   for (const r of lab) if (r.clip) files.push({ name: r.clip.name, data: new Uint8Array(await (await fetch(r.clip.url)).arrayBuffer()) });
-  const meta = { app: 'Sound Spotter ' + VERSION, model: MODEL.version, exported: new Date().toISOString(), device: navigator.userAgent, mic: statusBase.replace(/<[^>]+>/g, ''), stereo: sp ? sp.stereo : null,
+  const meta = { app: 'Sound Spotter ' + VERSION, model: MODEL.version, exported: new Date().toISOString(), device: navigator.userAgent, mic: statusBase.replace(/<[^>]+>/g, ''), micInfo, micChecks, steadyTones: sp ? sp.steadyTones.map(t => ({ hz: +t.f.toFixed(1), faint: !!t.faint, name: toneName(t.f) })) : [], stereo: sp ? sp.stereo : null,
     events: lab.map(r => ({ start: new Date(r.s).toISOString(), end: r.e ? new Date(r.e).toISOString() : null, detector: r.id, detail: r.d, label: r.label, clip: r.clip ? r.clip.name : null, features: r.f || null })) };
   files.push({ name: 'labels.json', data: new TextEncoder().encode(JSON.stringify(meta, null, 1)) });
   const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'sound-spotter-export_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.zip'; a.click();
@@ -190,8 +191,83 @@ function summary(now) {
   for (const id of ['hum50', 'hum100', 'plant346', 'buzz501', 'whine']) if (sp.st[id].on) tones.push({ f: parseFloat(sp.st[id].text), faint: /faint/.test(sp.st[id].text) });
   for (const t of sp.steadyTones) if (!tones.some(q => Math.abs(q.f - t.f) < Math.max(3, t.f * 0.004))) tones.push(t);
   tones.sort((a, b) => a.f - b.f);
-  $('tones').innerHTML = tones.length ? tones.map(t => `<i class="${t.faint ? 'f' : ''}">${fmtHz(t.f)}${t.faint ? ' · faint' : ''}</i>`).join('') : '<i class="f">none yet</i>';
+  $('tones').innerHTML = tones.length ? tones.map(t => { const nm = toneName(t.f); return `<i class="${t.faint ? 'f' : ''}" data-f="${t.f.toFixed(1)}">${fmtHz(t.f)}${t.faint ? ' · faint' : ''}${nm ? ' · ' + nm : ''}</i>`; }).join('') : '<i class="f">none yet</i>';
 }
+
+
+// ---------- which microphone, and can it be trusted (ideas from freqmon's mic-integrity work) ----------
+function processedMic(label) {
+  const fams = [[/insta360/i, 'an Insta360 webcam'], [/krisp|nvidia broadcast|voicemod|sonar|nahimic/i, 'a noise-removal device'], [/airpods|buds|bluetooth|hands-?free|headset/i, 'a headset or Bluetooth microphone'], [/webcam|\bcam\b|camera/i, 'a webcam']];
+  if (/realtek|conexant|synaptics|surface/i.test(label)) return null;
+  for (const [re, name] of fams) if (re.test(label)) return name;
+  return null;
+}
+function micBanner() {
+  const el = $('micnote'), why = [];
+  if (micInfo) {
+    const on = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => micInfo[k] === true), unk = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => micInfo[k] === null);
+    if (micInfo.processedFamily) why.push(`This looks like ${micInfo.processedFamily}, which usually cleans up the sound inside the device.`);
+    if (on.length) why.push(`The browser left its own processing on (${on.join(', ')}).`);
+    else if (unk.length === 3) why.push('The browser does not say whether its sound processing is off.');
+    const last = micChecks[micChecks.length - 1];
+    if (last && last.outcome === 'processed') why.push(`Mic check: ${last.summary}`);
+  }
+  el.style.display = why.length ? '' : 'none';
+  el.textContent = why.length ? why.join(' ') + ' Faint tones and through-wall voices may be removed, and short beeps or pumping may be added, so treat detections with care.' + (micChecks.length ? '' : ' Run Mic check to test it.') : '';
+}
+// Mic check: plays a 1 kHz tone at two levels and holds it, to see whether the microphone follows a 10 dB step (automatic gain) and keeps a steady tone (noise cancelling).
+const CHECK = [['baseline', 2, 0], ['loud', 5, 0.25], ['quiet', 5, 0.25 / Math.sqrt(10)], ['hold', 20, 0.25]];
+function toneLevel(f, secs) {   // Goertzel on the newest audio
+  const n = Math.min(Math.round(sp.sr * secs), tot, ringN), w = 2 * Math.cos(2 * Math.PI * f / sp.sr); let a = 0, b = 0, i = (rw - n + ringN) % ringN;
+  for (let k = 0; k < n; k++) { const h = 0.5 - 0.5 * Math.cos(2 * Math.PI * k / n), c = ring[i] * h + w * a - b; b = a; a = c; if (++i === ringN) i = 0; }
+  return 10 * Math.log10((a * a + b * b - w * a * b) / (n * n / 16) + 1e-20);
+}
+function startCheck() {
+  if (!running || check) return;
+  const osc = ctx.createOscillator(), g = ctx.createGain(); osc.frequency.value = 1000; g.gain.value = 0; osc.connect(g); g.connect(ctx.destination); osc.start();
+  check = { osc, g, phase: 0, t0: Date.now(), last: 0, v: [[], [], [], []], early: [] }; $('micbtn').textContent = 'Stop mic check';
+}
+function checkStep() {
+  const c = check, now = Date.now(); let ph = c.phase, el = (now - c.t0) / 1000;
+  if (el >= CHECK[ph][1]) { ph = ++c.phase; c.t0 = now; el = 0; if (ph >= CHECK.length) return endCheck('done'); c.g.gain.setTargetAtTime(CHECK[ph][2], ctx.currentTime, 0.02); }
+  if (now - c.last >= 250) { c.last = now; const lv = toneLevel(1000, 0.2), dur = CHECK[ph][1];
+    if (ph === 3) { if (el >= 1.5 && el < 5) c.early.push(lv); if (el >= dur - 4) c.v[3].push(lv); } else if (el >= (ph ? 2 : 0.5)) c.v[ph].push(lv);
+    $('miccheck').textContent = `Mic check: ${['measuring the room', 'loud tone', 'quiet tone', 'holding the tone'][ph]}… ${Math.max(0, Math.ceil(dur - el))} s. Turn the volume up so you can hear it clearly.`; }
+}
+function endCheck(how) {
+  const c = check; check = null; try { c.osc.stop(); } catch (e) {} $('micbtn').textContent = 'Mic check';
+  const med = a => a.length ? a.slice().sort((x, y) => x - y)[a.length >> 1] : NaN, r = { at: new Date().toISOString(), outcome: how === 'done' ? 'ok' : 'cancelled' };
+  if (how === 'done') {
+    const base = med(c.v[0]), L1 = med(c.v[1]), L2 = med(c.v[2]), early = med(c.early), late = med(c.v[3]);
+    Object.assign(r, { floorDb: +base.toFixed(1), loudDb: +L1.toFixed(1), quietDb: +L2.toFixed(1), stepDb: +(L1 - L2).toFixed(1), fadeDb: +(Math.max(L1, early) - late).toFixed(1) });
+    if (!(L1 >= base + 10)) { r.outcome = 'inconclusive'; r.summary = 'the microphone did not pick up the test tone. Turn the volume up and run it again; if you could hear it clearly, the microphone may be removing it.'; }
+    else { const agc = r.stepDb < 5, over = r.stepDb > 15, nc = r.fadeDb > 6; r.agc = agc; r.noiseCancel = nc; r.overshoot = over;
+      r.outcome = agc || over || nc ? 'processed' : 'ok';
+      r.summary = r.outcome === 'ok' ? `the microphone followed a 10 dB step as ${r.stepDb} dB and kept a steady tone (faded ${Math.max(0, r.fadeDb)} dB). No sign of automatic gain or noise cancelling.`
+        : [agc ? `a 10 dB quieter tone only read ${r.stepDb} dB quieter, so something is levelling the sound (automatic gain)` : '', over ? `a 10 dB step read as ${r.stepDb} dB, so something is expanding or gating the sound` : '', nc ? `a steady tone faded by ${r.fadeDb} dB while it played, so something is cancelling steady sounds` : ''].filter(Boolean).join('; ') + '.'; }
+  } else r.summary = 'stopped before it finished.';
+  micChecks.push(r); $('miccheck').textContent = 'Mic check: ' + r.summary; $('miccheck').className = r.outcome === 'processed' || r.outcome === 'inconclusive' ? 'cap warn' : 'cap';
+  const now = Date.now(), row = { s: now, e: now, id: 'manual', d: 'Mic check (' + r.outcome + '): ' + r.summary }; rows.push(row); addRowDom(row); dirty = true; micBanner();
+}
+$('micbtn').onclick = () => check ? endCheck('cancelled') : startCheck();
+// Names for steady tones, from the freqmon fingerprint rules. These say what a tone at that pitch is commonly from, never what it certainly is.
+function toneName(f) {
+  const m = Math.round(f / 50);
+  if (f < 1250 && m >= 1 && Math.abs(f - m * 50) <= Math.max(0.6, f * 0.004)) return m === 1 ? 'mains hum' : m === 2 ? 'mains hum (rectifier ripple)' : `mains harmonic (${m} × 50 Hz)`;
+  if (Math.abs(f - 15625) <= 40 || Math.abs(f - 15734) <= 40) return 'old TV or CRT line whistle';
+  if (Math.abs(f - 17400) <= 120) return '"Mosquito" youth-deterrent pitch';
+  if (f >= 15000 && f <= 17000) return 'bird or pest deterrent range, or a power-supply whine';
+  if (f > 17000 && f <= 22000) return 'pest-repeller or power-supply range';
+  if (Math.abs(f - 8000) <= 100) return 'deterrent at 8 kHz, or power-supply ringing';
+  return '';
+}
+// "Can I hear this?": tap a steady tone to play that pitch for two seconds. Detection waits while it plays.
+$('tones').onclick = e => {
+  const el = e.target.closest('i[data-f]'); if (!el || !running || check || hearing) return;
+  const f = +el.dataset.f, osc = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime; osc.frequency.value = f; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.2, t + 0.05); g.gain.setValueAtTime(0.2, t + 1.9); g.gain.linearRampToValueAtTime(0, t + 2);
+  osc.connect(g); g.connect(ctx.destination); osc.start(); osc.stop(t + 2.05); hearing = Date.now() + 3500;
+  $('hearnote').textContent = `Playing ${fmtHz(f)} for two seconds. If you cannot hear it with the volume up, a real tone at this pitch is probably above your hearing${f > 14000 ? ' (and small speakers are weak up here, so try headphones too)' : ''}.`;
+};
 
 // ---------- Silero VAD (the small trained voice model; runs only when the page is served over http/https) ----------
 const vad = { ok: false, sess: null, state: null, ctx: new Float32Array(64), q: [], busy: false, buf: new Float32Array(512), n: 0, ratio: 3, pos: 0, prev: 0, z: [0, 0, 0, 0], co: null, rms: 1e-4 };
@@ -241,6 +317,8 @@ if (/^https?:$/.test(location.protocol)) fetch('model.json', { cache: 'no-store'
 function onChunk(l, r) {
   if (paused || !running) return;
   const n = l.length; for (let i = 0; i < n; i++) { ring[rw] = r ? (l[i] + r[i]) * 0.5 : l[i]; if (++rw === ringN) rw = 0; } tot += n;
+  if (check) { checkStep(); return; }   // the page's own test tone must never reach the detectors or the log
+  if (hearing) { if (Date.now() > hearing) hearing = null; return; }
   sp.sileroOn = vad.ok; vadFeed(l, r); sp.push(l, r); const now = Date.now(); transitions(now);
   for (let i = pending.length - 1; i >= 0; i--) { const p = pending[i]; if ((p.to !== null && tot >= p.to) || tot >= p.max) { pending.splice(i, 1); const x = cut(p.from, Math.min(tot, p.to === null ? p.max : p.to)); if (x) makeClip(x, p.r); } }
   if (sp.shortSeq !== lastSeq) { lastSeq = sp.shortSeq; waterColumn(); }
@@ -271,7 +349,11 @@ async function start() {
     src.connect(node); node.connect(mute); mute.connect(ctx.destination);
     running = true; paused = false; startedAt = Date.now(); $('go').textContent = 'Stop'; $('go').classList.remove('primary'); $('snap').disabled = false;
     const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => set[k] === true);
-    statusBase = `<b>${tr.label}</b> · ${ctx.sampleRate} Hz` + (proc.length ? ` · <span class="warn">browser processing still on: ${proc.join(', ')}</span>` : ' · browser processing off');
+    const tri = k => set[k] === true ? true : set[k] === false ? false : null, fam = processedMic(tr.label);
+    micInfo = { label: tr.label, sampleRate: ctx.sampleRate, channelCount: set.channelCount || null, echoCancellation: tri('echoCancellation'), noiseSuppression: tri('noiseSuppression'), autoGainControl: tri('autoGainControl'), processedFamily: fam };
+    const st = document.createElement('b'); st.textContent = tr.label;
+    statusBase = st.outerHTML + ` · ${ctx.sampleRate} Hz` + (proc.length ? ` · <span class="warn">browser processing still on: ${proc.join(', ')}</span>` : ' · browser processing off');
+    micChecks = []; $('micbtn').disabled = false; micBanner();
     try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
     draw();
   } catch (e) { $('status').innerHTML = `<span class="warn">Could not open the microphone: ${e.message}. Allow microphone access for this page and try again.</span>`; }
@@ -279,6 +361,7 @@ async function start() {
 function stop() {
   running = false; if (node) node.disconnect(); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close(); if (wake) { try { wake.release(); } catch (e) {} }
   for (const b of BOXES) sp.st[b.id].on = false; transitions(Date.now()); dirty = true; save(); drawTimeline(Date.now());
+  if (check) endCheck('cancelled'); hearing = null; $('micbtn').disabled = true;
   $('go').textContent = 'Start listening'; $('go').classList.add('primary'); $('snap').disabled = true; $('status').textContent = 'Stopped.'; $('lvl').style.width = '0'; $('lvltxt').textContent = '';
 }
 $('go').onclick = () => running ? stop() : start();

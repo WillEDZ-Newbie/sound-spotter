@@ -31,3 +31,9 @@ Nothing lights on the five real recordings from the night of 17 Nov 2026.
 
 Finding: Silero reads 0 on quiet room audio until the input is high-passed at 150 Hz and levelled; after that it also
 hears through-wall voices (800 and 500 Hz walls), which the earlier voicehunter table (0.00 on walls) did not show.
+
+## Traps (v4)
+
+`node harness/traps.js` synthesises the false-alarm cases documented in the freqmon audits (a steady whine with harmonics, noise or rumble pulsing at syllable rate, a loud pure tone, a buzz switching on and off) and fails if any of them lights Muffled speech or Voice in the room. Pulsing noise used to light Voice in the room through both the rules and the learned score; v4 requires a pitch that glides from frame to frame (`f0Cont`, `glide`) before either vote counts.
+
+Cost on the voice clips (caught as expected, of 12), v3.1 -> v4: full system with Silero unchanged except wall350 +5 dB 10 -> 9. Without Silero (page opened from a file): wall350 +5 dB 10 -> 5, wall800 0 dB 9 -> 8; the rest unchanged.

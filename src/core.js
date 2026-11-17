@@ -231,13 +231,15 @@ Spotter.prototype.voiceFrame = function (back) {
   const f0s = all.filter(v => Math.abs(v - med0) <= 0.25 * med0);   // drop octave slips and strays
   this.voicedAll = all.length; this.voicedN = f0s.length; this.f0Med = f0s.length ? f0s[f0s.length >> 1] : 0;
   this.f0Iqr = f0s.length > 4 ? f0s[Math.floor(f0s.length * 0.9)] - f0s[Math.floor(f0s.length * 0.1)] : 0;
+  // a voice's pitch glides from one frame to the next; pulsing noise (a pump, a vacuum) gives pitch guesses that jump about
+  { let pr = 0, ct = 0; const h = this.f0Hist; for (let i = 1; i < h.length; i++) if (h[i] > 0 && h[i - 1] > 0) { pr++; if (Math.abs(h[i] - h[i - 1]) <= 0.12 * h[i - 1]) ct++; } this.f0Cont = pr ? ct / pr : 1; this.jitter = pr >= 3 && this.f0Cont < 0.5; this.glide = ct; }
   this.vDbg = { env, best, bf, rhythm: this.rhythm, slow, voicedN: this.voicedN, iqr: this.f0Iqr };
   const R = this.st.rhythm, Pi = this.st.pitch, S = this.st.speech;
   const calm = true;
-  const rOk = calm && this.rhythm >= this.RHY_ON, pOk = calm && this.voicedN >= 7 && this.voicedN >= 0.6 * this.voicedAll && this.voicedAll <= 64 && this.f0Iqr >= 4;
+  const rOk = calm && this.rhythm >= this.RHY_ON, pOk = calm && this.voicedN >= 7 && this.voicedN >= 0.6 * this.voicedAll && this.voicedAll <= 64 && this.f0Iqr >= 4 && !this.jitter && this.glide >= 2;
   if (rOk) this.rhyRun = Math.min(40, this.rhyRun + 1); else this.rhyRun = Math.max(0, this.rhyRun - 2);
   R.on = this.rhyRun >= 30 || (R.on && calm && this.rhythm >= this.RHY_ON * 0.85); if (R.on) { this.rhyPk = Math.max(this.rhyPk || 0, this.rhythm); R.text = `syllable-rate pulsing · up to ${this.rhyPk.toFixed(1)} dB swing at 2–8 Hz`; } else this.rhyPk = 0;
-  Pi.on = (pOk || (Pi.on && calm && this.voicedN >= 4)) && !(this.st.rumble.on && !R.on); /* an engine's harmonics are not a voice */ if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
+  Pi.on = (pOk || (Pi.on && calm && this.voicedN >= 4 && !this.jitter)) && !(this.st.rumble.on && !R.on); /* an engine's harmonics are not a voice */ if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
   this.bothRun = R.on && Pi.on ? (this.bothRun || 0) + 1 : 0;
   // feature vector for the learned voice-presence score (trained offline on the harness; weights arrive in model.json)
   { const e2 = x.slice(40), srt = Float64Array.from(x).sort(), bs = Float64Array.from(this.bestHist).sort(); let em = 0; for (const v of e2) em += v; em /= e2.length; let bm = 0; for (const v of bs) bm += v; bm /= bs.length;
@@ -245,7 +247,7 @@ Spotter.prototype.voiceFrame = function (back) {
     const p = this.learned('voicePresent', this.fv);
     if (p !== null) { this.pHist.push(p); if (this.pHist.length > 20) this.pHist.shift(); let a = 0; for (const v of this.pHist) a += v; this.pVoice = a / this.pHist.length;
       const thr = this.logit.voicePresent.thr[this.sens];
-      if (this.pVoice >= thr && !this.st.rumble.on) this.learnRun = Math.min(60, this.learnRun + 1); else this.learnRun = Math.max(0, this.learnRun - 2); } }
+      if (this.pVoice >= thr && !this.st.rumble.on && !this.jitter && this.glide >= 1) this.learnRun = Math.min(60, this.learnRun + 1); else this.learnRun = Math.max(0, this.learnRun - 2); } }
   const V = this.st.voice, sil = this.t - this.sileroAt < 1.0 ? this.silero : 0, nearNow = this.st.near.on;
   if (sil >= 0.5) this.sileroRun = Math.min(40, this.sileroRun + 1); else this.sileroRun = Math.max(0, this.sileroRun - 1);
   // three independent votes that a voice is present: the hand rules, the learned score, and the Silero voice model

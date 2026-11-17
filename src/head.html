@@ -45,7 +45,7 @@
   .cap { color:var(--dim); font-size:12px; margin:5px 2px 0; }
   #tones { display:flex; flex-wrap:wrap; gap:6px; }
   #tones i { font-style:normal; font-size:12.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); background:var(--panel); font-variant-numeric:tabular-nums; }
-  #tones i.f { border-style:dashed; color:var(--dim); }
+  #tones i.f { border-style:dashed; color:var(--dim); } #tones i[data-f] { cursor:pointer; } #micnote { font-size:13px; margin:6px 0; }
   .logwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:340px; overflow:auto; }
   table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
   th, td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:middle; }
@@ -82,6 +82,7 @@
     <div class="meter" title="Input level"><i id="lvl"></i></div><span id="lvltxt"></span>
   </div>
   <div id="status">Not listening.</div>
+  <div id="micnote" class="warn" style="display:none"></div>
   <div id="summary"><div class="now">Press Start listening.</div><div class="past">Tone boxes need about 10 seconds before they can light; speech boxes about 6.</div></div>
   <div class="grid" id="grid"></div>
 
@@ -97,6 +98,9 @@
 
   <h3>Steady tones right now</h3>
   <div id="tones"><i class="f">none yet</i></div>
+  <div class="cap" id="hearnote">Tap a tone while listening to play that pitch and find out whether you can hear it. The names say what a tone at that pitch commonly comes from, not what it certainly is.</div>
+  <div class="tools"><button id="micbtn" disabled>Mic check</button></div>
+  <div class="cap" id="miccheck">Mic check plays a 1 kHz tone for about half a minute to find out whether this microphone levels or cancels sound before the page gets it.</div>
 
   <h3>Log</h3>
   <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
