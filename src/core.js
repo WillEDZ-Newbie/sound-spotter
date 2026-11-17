@@ -251,7 +251,9 @@ Spotter.prototype.voiceFrame = function (back) {
   const V = this.st.voice, sil = this.t - this.sileroAt < 1.0 ? this.silero : 0, nearNow = this.st.near.on;
   if (sil >= 0.5) this.sileroRun = Math.min(40, this.sileroRun + 1); else this.sileroRun = Math.max(0, this.sileroRun - 1);
   // three independent votes that a voice is present: the hand rules, the learned score, and the Silero voice model
-  const evid = this.bothRun >= 40 || this.learnRun >= 30 || this.sileroRun >= 10, heard = this.sileroRun >= 6;
+  /* the hand rules alone are not enough when the learned score says clearly not a voice (thumps over rumble have rhythm and a stray pitch) */
+  const rules = this.bothRun >= 40 && (this.pVoice === null || this.pVoice === undefined || this.pVoice >= 0.3);
+  const evid = rules || this.learnRun >= 30 || this.sileroRun >= 10, heard = this.sileroRun >= 6;
   // muffled or clear is decided by the highs alone (the wall signature). Once an event reads as through-wall it takes clearly more highs to change its mind.
   const clear = evid && this.hiRatio >= (this.spHold > 0 ? 2 : 1) * this.HI_MUFFLED;
   if (evid && !clear && !nearNow) this.spHold = 60; else if (this.spHold > 0) this.spHold--;

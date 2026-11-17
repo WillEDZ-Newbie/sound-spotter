@@ -20,7 +20,7 @@ const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
 const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
 const CLIP_IDS = new Set(['speech', 'voice', 'alarm', 'rumble']);
-const VERSION = 'v4.0';
+const VERSION = 'v4.1';
 const LABELS = ['Real: voice through a wall', 'Real: voice or TV in my room', 'Real: alarm', 'Real: vehicle', 'Real: plant or machine', 'Real: something else', 'Not real: me or the device', 'Not real: nothing there'];
 let MODEL = __MODEL__;
 const $ = id => document.getElementById(id);

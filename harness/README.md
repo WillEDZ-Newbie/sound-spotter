@@ -37,3 +37,7 @@ hears through-wall voices (800 and 500 Hz walls), which the earlier voicehunter 
 `node harness/traps.js` synthesises the false-alarm cases documented in the freqmon audits (a steady whine with harmonics, noise or rumble pulsing at syllable rate, a loud pure tone, a buzz switching on and off) and fails if any of them lights Muffled speech or Voice in the room. Pulsing noise used to light Voice in the room through both the rules and the learned score; v4 requires a pitch that glides from frame to frame (`f0Cont`, `glide`) before either vote counts.
 
 Cost on the voice clips (caught as expected, of 12), v3.1 -> v4: full system with Silero unchanged except wall350 +5 dB 10 -> 9. Without Silero (page opened from a file): wall350 +5 dB 10 -> 5, wall800 0 dB 9 -> 8; the rest unchanged.
+
+## First phone export (17 Nov 2026, v4.1)
+
+Ten minutes from the Pixel gave 19 "Muffled speech" events, all with the voice model silent and the learned score at 15% or below; the clips show thumps over low rumble, no voiced harmonics. The hand rules now need the learned score to be at least 30% before they count on their own. Replaying the 40 clips: muffled speech 71.7 s (v3.1) -> 12.3 s. Harness recall with Silero is unchanged by this rule.
