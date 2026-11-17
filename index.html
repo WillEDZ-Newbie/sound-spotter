@@ -3,24 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111417">
 <title>Sound Spotter</title>
 <style>
   :root { --bg:#111417; --panel:#1a1f24; --line:#2a3139; --text:#e6e9ec; --dim:#8b96a1; --accent:#ffb347; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 "Segoe UI",system-ui,sans-serif; }
-  main { max-width:1100px; margin:0 auto; padding:20px; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 "Segoe UI",Roboto,system-ui,sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:20px 20px calc(28px + env(safe-area-inset-bottom)); }
   h1 { font-size:20px; font-weight:600; margin:0 0 2px; letter-spacing:.2px; }
+  h3 { font-size:13px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:.8px; margin:22px 2px 8px; display:flex; align-items:center; gap:10px; }
+  h3 select { margin-left:auto; padding:4px 8px; font-size:13px; text-transform:none; letter-spacing:0; }
   .sub { color:var(--dim); margin:0 0 16px; }
   .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
   button, select { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px 14px; }
-  button { cursor:pointer; } button.primary { background:var(--accent); color:#1b1408; border-color:var(--accent); font-weight:600; }
-  select { max-width:340px; }
-  #status { color:var(--dim); font-size:13px; min-height:20px; margin-bottom:14px; }
+  button { cursor:pointer; } button:active { filter:brightness(1.25); }
+  button.primary { background:var(--accent); color:#1b1408; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  select { max-width:300px; }
+  #status { color:var(--dim); font-size:13px; min-height:20px; margin-bottom:12px; }
   #status b { color:var(--text); font-weight:600; }
   .warn { color:#ff8a70; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; margin-bottom:16px; }
+  #summary { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+  #summary .now { font-size:17px; font-weight:600; }
+  #summary .past { color:var(--dim); font-size:13.5px; margin-top:4px; }
+  #summary .past b { color:var(--text); font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
   .box { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-height:112px; transition:background .25s,border-color .25s,box-shadow .25s; position:relative; }
-  .box h2 { font-size:15px; font-weight:600; margin:0 0 2px; }
+  .box h2 { font-size:15px; font-weight:600; margin:0 0 2px; padding-right:16px; }
   .box .what { color:var(--dim); font-size:12.5px; }
   .box .now { font-size:12.5px; margin-top:8px; min-height:18px; font-variant-numeric:tabular-nums; }
   .box .last { color:var(--dim); font-size:12px; margin-top:2px; font-variant-numeric:tabular-nums; }
@@ -28,42 +37,74 @@
   .box.on { background:color-mix(in srgb,var(--c) 22%,var(--panel)); border-color:var(--c); box-shadow:0 0 18px color-mix(in srgb,var(--c) 35%,transparent); }
   .box.on .dot { background:var(--c); }
   .box.recent { border-color:color-mix(in srgb,var(--c) 45%,var(--line)); }
-  canvas { width:100%; height:190px; background:var(--panel); border:1px solid var(--line); border-radius:8px; display:block; }
-  .cap { color:var(--dim); font-size:12px; margin:4px 2px 16px; }
-  .logwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:300px; overflow:auto; }
+  canvas { width:100%; background:var(--panel); border:1px solid var(--line); border-radius:8px; display:block; }
+  #spec { height:130px; margin-top:8px; }
+  .wf { position:relative; } #water { height:240px; image-rendering:pixelated; }
+  .wf span { position:absolute; left:6px; font-size:10.5px; color:#fff; opacity:.75; text-shadow:0 0 3px #000,0 0 3px #000; transform:translateY(-50%); pointer-events:none; }
+  .cap { color:var(--dim); font-size:12px; margin:5px 2px 0; }
+  #tones { display:flex; flex-wrap:wrap; gap:6px; }
+  #tones i { font-style:normal; font-size:12.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line); background:var(--panel); font-variant-numeric:tabular-nums; }
+  #tones i.f { border-style:dashed; color:var(--dim); }
+  .logwrap { background:var(--panel); border:1px solid var(--line); border-radius:8px; max-height:340px; overflow:auto; }
   table { width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums; }
-  th, td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
-  th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); }
-  td:last-child { white-space:normal; color:var(--dim); }
-  .meter { flex:1; min-width:140px; height:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  th, td { text-align:left; padding:6px 12px; border-bottom:1px solid var(--line); white-space:nowrap; vertical-align:middle; }
+  th { color:var(--dim); font-weight:500; position:sticky; top:0; background:var(--panel); z-index:1; }
+  td.d { white-space:normal; color:var(--dim); }
+  td.c button, td.c a { padding:3px 9px; font-size:12px; border-radius:5px; text-decoration:none; color:var(--text); background:#232a31; border:1px solid var(--line); display:inline-block; margin-right:4px; }
+  td i.sw { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; }
+  .meter { flex:1; min-width:120px; height:8px; background:var(--panel); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
   .meter i { display:block; height:100%; width:0; background:var(--accent); }
+  #lvltxt { color:var(--dim); font-size:12.5px; min-width:64px; font-variant-numeric:tabular-nums; }
+  .tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
   @media (max-width:640px) {
-    main { padding:14px 12px calc(14px + env(safe-area-inset-bottom)); }
+    main { padding:14px 12px calc(20px + env(safe-area-inset-bottom)); }
     h1 { font-size:18px; } .sub { font-size:13.5px; margin-bottom:12px; }
-    .bar { gap:8px; } button, select { padding:11px 14px; } #go { flex:1 1 100%; font-size:16px; } select { flex:1 1 100%; max-width:none; }
+    .bar { gap:8px; } button, select { padding:11px 14px; } #go { flex:1 1 100%; font-size:16px; } .bar select { flex:1 1 45%; max-width:none; min-width:0; }
+    #summary .now { font-size:15.5px; }
     .grid { grid-template-columns:1fr 1fr; gap:8px; }
-    .box { padding:10px 11px; min-height:104px; } .box h2 { font-size:14px; padding-right:16px; } .box .what { font-size:12px; }
-    .box .dot { top:12px; right:11px; }
-    canvas { height:140px; }
+    .box { padding:10px 11px; min-height:104px; } .box h2 { font-size:14px; } .box .what { font-size:12px; } .box .dot { top:12px; right:11px; }
+    #water { height:200px; } #spec { height:110px; }
     th, td { padding:6px 8px; font-size:12px; white-space:normal; } th:nth-child(2), td:nth-child(2) { white-space:nowrap; }
+    .tools button { flex:1 1 45%; }
   }
 </style>
 </head>
 <body>
 <main>
   <h1>Sound Spotter</h1>
-  <p class="sub">Listens through the microphone and lights a box for each kind of sound it can pick out. Tone boxes need about 10 seconds of listening before they can light; the speech boxes need about 6.</p>
+  <p class="sub">Listens through the microphone, lights a box for each kind of sound it recognises, and keeps short clips of the interesting ones so you can check them by ear.</p>
   <div class="bar">
     <button id="go" class="primary">Start listening</button>
     <select id="mic" aria-label="Microphone"></select>
-    <div class="meter" title="Input level"><i id="lvl"></i></div>
-    <button id="csv">Save log (CSV)</button>
+    <select id="sens" aria-label="Sensitivity"><option value="0">Sensitivity: low</option><option value="1" selected>Sensitivity: normal</option><option value="2">Sensitivity: high</option></select>
+    <div class="meter" title="Input level"><i id="lvl"></i></div><span id="lvltxt"></span>
   </div>
   <div id="status">Not listening.</div>
+  <div id="summary"><div class="now">Press Start listening.</div><div class="past">Tone boxes need about 10 seconds before they can light; speech boxes about 6.</div></div>
   <div class="grid" id="grid"></div>
-  <canvas id="spec" width="1060" height="190"></canvas>
-  <div class="cap">Averaged spectrum, 20 Hz to 20 kHz. Orange: what one microphone hears. Blue: sound common to both microphones, which shows faint tones hidden under microphone hiss.</div>
-  <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th></tr></thead><tbody id="log"></tbody></table></div>
+
+  <h3>Timeline <select id="span" aria-label="Timeline length"><option value="600">Last 10 minutes</option><option value="3600">Last hour</option><option value="28800">Last 8 hours</option></select></h3>
+  <canvas id="tl"></canvas>
+  <div class="cap">One row per box. A coloured bar means that sound was being heard. Regular gaps show up as evenly spaced bars.</div>
+
+  <h3>Live picture of the sound</h3>
+  <div class="wf"><canvas id="water"></canvas><div id="wfax"></div></div>
+  <div class="cap">Time runs left to right, newest at the right edge. Pitch runs bottom (50 Hz) to top (20 kHz). Brighter is louder. Steady tones are horizontal lines, speech is wobbling stripes low down, clicks are vertical lines.</div>
+  <canvas id="spec"></canvas>
+  <div class="cap">Averaged spectrum, 20 Hz to 20 kHz. Orange: one microphone. Blue: sound common to both microphones, which reveals faint tones under the microphone hiss.</div>
+
+  <h3>Steady tones right now</h3>
+  <div id="tones"><i class="f">none yet</i></div>
+
+  <h3>Log</h3>
+  <div class="logwrap"><table><thead><tr><th>Started</th><th>Lasted</th><th>Sound</th><th>Detail</th><th>Clip</th></tr></thead><tbody id="log"></tbody></table></div>
+  <div class="tools">
+    <button id="snap" disabled>Save the last 30 seconds as a clip</button>
+    <button id="csv">Save log (CSV)</button>
+    <button id="clear">Clear log</button>
+  </div>
+  <div class="cap">Clips are kept for muffled speech, alarm-type tones, low rumbles and anything you save by hand. They are amplified so quiet sounds are audible, and the amount is in the file name. Clips live only in this tab until you download them. Listening pauses while a clip plays.</div>
+  <audio id="player"></audio>
 </main>
 <script>
 // ---- Sound Spotter core (pure DSP, no browser APIs) ----
@@ -118,7 +159,7 @@ class Spotter {
     this.alF = -1; this.alRun = 0; this.alHold = 0;
     this.hopV = Math.round(sr * 0.05); this.sinceV = 0; this.vBase = null; this.vInit = 0; this.envHist = []; this.f0Hist = []; this.clkHist = [];
     this.rhythm = 0; this.voicedN = 0; this.f0Med = 0; this.f0Iqr = 0; this.rhyRun = 0; this.spHold = 0; this.vDbg = null;
-    this.otherF = -1; this.lastEvent = -100; this.shortDb = new Float32Array(this.NS / 2); this.level = -120;
+    this.otherF = -1; this.lastEvent = -100; this.shortSeq = 0; this.toneTrack = new Map(); this.steadyTones = []; this.setSensitivity(1); this.shortDb = new Float32Array(this.NS / 2); this.level = -120;
   }
   push(l, r) {
     const N = l.length, NL = this.NL;
@@ -169,8 +210,8 @@ class Spotter {
     const coh = k => { const c = this.CRe[k] * this.CRe[k] + this.CIm[k] * this.CIm[k]; return c / (this.PLL[k] * this.PRR[k] + 1e-60); };
     const judge = (f1, f2) => {
       const p = prom(this.powDb, f1, f2);
-      if (p.prom >= 6) return { ok: true, f: p.f, prom: p.prom, level: p.level };
-      if (this.stereo && this.longCount >= 12) { const c = prom(this.cohDb, f1, f2); if (c.prom >= 8 && coh(c.k) >= 0.25) return { ok: true, f: c.f, prom: c.prom, level: this.powDb[c.k], faint: true }; }
+      if (p.prom >= this.K.tonePow) return { ok: true, f: p.f, prom: p.prom, level: p.level };
+      if (this.stereo && this.longCount >= 12) { const c = prom(this.cohDb, f1, f2); if (c.prom >= this.K.toneCoh && coh(c.k) >= 0.25) return { ok: true, f: c.f, prom: c.prom, level: this.powDb[c.k], faint: true }; }
       return { ok: false, prom: p.prom };
     };
     const busy = this.t - this.lastEvent < 25; // swells and knocks smear into the averaged spectrum
@@ -192,6 +233,7 @@ class Spotter {
       }
       return best;
     };
+    if (!busy) this.trackTones(k0, kE, BL, hz, coh);
     let o = busy ? null : scan(this.powDb, 9, false);
     if (!o && !busy && this.stereo && this.longCount >= 15) { o = scan(this.cohDb, 13, true); if (o) o.faint = true; }
     const s = this.st.other;
@@ -210,7 +252,7 @@ class Spotter {
       const x = (hl[i] + hr[i]) / 2; this.hpY = this.hpA * (this.hpY + x - this.prevX); this.prevX = x; this.lpZ += this.lpB * (this.hpY - this.lpZ); const d = this.lpZ; ss += d * d; sq += x * x;
       if ((i + 1) % subN === 0) {
         const v = dB(ss / subN); ss = 0;
-        if (this.sub.length > 100 && v - median(this.sub) >= 12) clicked = true;
+        if (this.sub.length > 100 && v - median(this.sub) >= this.K.click) clicked = true;
         this.sub.push(v); if (this.sub.length > 300) this.sub.shift();
       }
     }
@@ -226,7 +268,7 @@ class Spotter {
     const v1 = band(200, 1000), v2 = band(2500, 8000), ru = this.st.rumble;
     const base1 = this.b1.length > 50 ? pct(this.b1, 0.3) : v1, base2 = this.b2.length > 50 ? pct(this.b2, 0.3) : v2;
     const up = v1 - base1, hi = v2 - base2;
-    if (up >= 5 && hi < 4 && this.b1.length > 50 && (ru.on || this.rhythm < 2.0) && !this.st.speech.on) { this.rumRun++; this.rumOff = 0; } else { this.rumOff++; if (this.rumOff > 3) this.rumRun = 0; }
+    if (up >= this.K.rumble && hi < 4 && this.b1.length > 50 && (ru.on || this.rhythm < 2.0) && !this.st.speech.on) { this.rumRun++; this.rumOff = 0; } else { this.rumOff++; if (this.rumOff > 3) this.rumRun = 0; }
     if (this.rumRun >= 12) { if (!ru.on) this.rumPk = 0; ru.on = true; this.rumPk = Math.max(this.rumPk, up); ru.text = `low-frequency swell · peak +${this.rumPk.toFixed(0)} dB`; }
     if (ru.on && this.rumOff >= 15) ru.on = false;
     if (!ru.on || this.b1.length < 100) { this.b1.push(v1); this.b2.push(v2); if (this.b1.length > 900) { this.b1.shift(); this.b2.shift(); } }
@@ -234,10 +276,11 @@ class Spotter {
     const k1 = this.bin(1500, NS), k2 = this.bin(5000, NS); let pk = -1e9, kp = k1;
     for (let k = k1; k <= k2; k++) if (this.shortDb[k] > pk) { pk = this.shortDb[k]; kp = k; }
     const pr = pk - median(this.shortDb.subarray(k1, k2 + 1)), al = this.st.alarm;
-    if (pr >= 15 && !clicked && Math.abs(kp - this.alF) <= 3) this.alRun++; else this.alRun = pr >= 15 && !clicked ? 1 : 0;
+    if (pr >= this.K.alarm && !clicked && Math.abs(kp - this.alF) <= 3) this.alRun++; else this.alRun = pr >= this.K.alarm && !clicked ? 1 : 0;
     this.alF = kp;
     if (this.alRun >= 3) { this.alHold = 15; al.text = `${(kp * this.sr / NS).toFixed(0)} Hz tone · ${pr.toFixed(0)} dB above background`; }
     al.on = this.alHold > 0; if (this.alHold > 0) this.alHold--;
+    this.shortSeq++;
   }
 }
 
@@ -268,7 +311,7 @@ Spotter.prototype.voiceFrame = function (back) {
     if (sc > best && okH) { best = sc; bf = f0; bh = strong; }
   }
   const clickNow = this.t - (this.lastClick || -9) < 0.3;
-  const voiced = best >= 4.5 && !clickNow;
+  const voiced = best >= this.K.voiced && !clickNow;
   this.envHist.push(env); this.f0Hist.push(voiced ? bf : 0);
   if (this.envHist.length > 80) { this.envHist.shift(); this.f0Hist.shift(); }
   if (this.envHist.length < 80) return;
@@ -286,62 +329,217 @@ Spotter.prototype.voiceFrame = function (back) {
   const calm = true;
   const rOk = calm && this.rhythm >= this.RHY_ON, pOk = calm && this.voicedN >= 7 && this.voicedN >= 0.6 * this.voicedAll && this.voicedAll <= 64 && this.f0Iqr >= 4;
   if (rOk) this.rhyRun = Math.min(40, this.rhyRun + 1); else this.rhyRun = Math.max(0, this.rhyRun - 2);
-  R.on = this.rhyRun >= 30 || (R.on && calm && this.rhythm >= this.RHY_ON * 0.85); if (R.on) R.text = `syllable-rate pulsing · ${this.rhythm.toFixed(1)} dB swing at 2–8 Hz`;
-  Pi.on = pOk || (Pi.on && calm && this.voicedN >= 4); if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
+  R.on = this.rhyRun >= 30 || (R.on && calm && this.rhythm >= this.RHY_ON * 0.85); if (R.on) { this.rhyPk = Math.max(this.rhyPk || 0, this.rhythm); R.text = `syllable-rate pulsing · up to ${this.rhyPk.toFixed(1)} dB swing at 2–8 Hz`; } else this.rhyPk = 0;
+  Pi.on = (pOk || (Pi.on && calm && this.voicedN >= 4)) && !(this.st.rumble.on && !R.on); /* an engine's harmonics are not a voice */ if (Pi.on) Pi.text = `${this.f0Med < 155 ? 'lower' : 'higher'}-pitched voice · about ${this.f0Med.toFixed(0)} Hz, moving`;
   this.bothRun = R.on && Pi.on ? (this.bothRun || 0) + 1 : 0;
   if (this.bothRun >= 40) this.spHold = 60; else if (this.spHold > 0) this.spHold--;
   S.on = this.spHold > 0; if (R.on && Pi.on) S.text = `voice pitch about ${this.f0Med.toFixed(0)} Hz with speech rhythm`;
 };
 Spotter.prototype.RHY_ON = 1.6;
+
+// ---------- list of every steady tone (150 Hz – 20 kHz) ----------
+Spotter.prototype.trackTones = function (k0, kE, BL, hz, coh) {
+  const found = [];
+  const collect = (arr, thr, needCoh, faint) => {
+    const nb = Math.floor((kE - k0) / BL), med = new Float64Array(nb);
+    for (let b = 0; b < nb; b++) med[b] = median(arr.subarray(k0 + b * BL, k0 + (b + 1) * BL));
+    for (let b = 1; b < nb - 1; b++) for (let i = 0; i < BL; i++) {
+      const k = k0 + b * BL + i, x = (i + 0.5) / BL, fl = x < 0.5 ? med[b - 1] * (0.5 - x) + med[b] * (0.5 + x) : med[b] * (1.5 - x) + med[b + 1] * (x - 0.5);
+      const p = arr[k] - fl;
+      if (p >= thr && arr[k] >= arr[k - 1] && arr[k] >= arr[k + 1] && (!needCoh || coh(k) >= 0.3)) found.push({ f: k * hz, prom: p, faint });
+    }
+  };
+  collect(this.powDb, 9, false, false);
+  if (this.stereo && this.longCount >= 15) collect(this.cohDb, 13, true, true);
+  found.sort((a, b) => (a.faint - b.faint) || (b.prom - a.prom));
+  const acc = [];
+  for (const p of found) { if (acc.length >= 40) break; if (!acc.some(q => Math.abs(q.f - p.f) < Math.max(3, p.f * 0.004))) acc.push(p); }
+  const seen = new Set();
+  for (const p of acc) {
+    const key = Math.round(p.f / 3); let t = this.toneTrack.get(key) || this.toneTrack.get(key - 1) || this.toneTrack.get(key + 1);
+    if (!t) { t = { streak: 0, miss: 0 }; this.toneTrack.set(key, t); }
+    if (seen.has(t)) continue;
+    t.f = p.f; t.prom = p.prom; t.faint = p.faint; t.streak++; t.miss = 0; seen.add(t);
+  }
+  for (const [k, t] of this.toneTrack) if (!seen.has(t)) { t.miss++; if (t.miss >= 5) this.toneTrack.delete(k); }
+  this.steadyTones = [...this.toneTrack.values()].filter(t => t.streak >= 5).sort((a, b) => a.f - b.f);
+};
+Spotter.prototype.setSensitivity = function (l) {
+  this.sens = l;
+  this.K = { tonePow: [7, 6, 5][l], toneCoh: [9, 8, 7][l], rumble: [6, 5, 4][l], click: [14, 12, 10][l], alarm: [18, 15, 12][l], voiced: [5.5, 4.5, 4][l] };
+  this.RHY_ON = [1.9, 1.6, 1.4][l];
+};
 if (typeof module !== 'undefined') module.exports = { Spotter, fft };
 // ---- UI ----
 const BOXES = [
-  { id:'speech',   name:'Muffled speech',       what:'Voice pitch and speech rhythm together',     c:'#ff7ab6' },
-  { id:'rhythm',   name:'Speech rhythm',        what:'Loudness pulsing at syllable rate, 2–8 Hz',  c:'#f5a3c7' },
-  { id:'pitch',    name:'Voice pitch',          what:'Moving harmonic pitch, 75–300 Hz',           c:'#e0b3ff' },
-  { id:'alarm',    name:'Alarm-type tone',      what:'Strong tone or beeping, 1.5–5 kHz',        c:'#ff5d5d' },
-  { id:'whine',    name:'High whine',           what:'Steady 16.86 kHz electronic tone',          c:'#c58bff' },
-  { id:'other',    name:'Other steady tone',    what:'Any other constant pitch, 150 Hz–20 kHz',   c:'#ff8ad1' },
-  { id:'rumble',   name:'Low rumble',           what:'10-second swell, e.g. a vehicle passing',   c:'#ffb347' },
-  { id:'click',    name:'Click or knock',       what:'Sharp, short sound',                         c:'#ffe066' },
-  { id:'hum100',   name:'Mains hum',            what:'100 Hz electrical hum',                      c:'#5fd0a5' },
-  { id:'hum50',    name:'Low hum',              what:'49–50 Hz motor or mains',                    c:'#4fc3d9' },
-  { id:'plant346', name:'Plant tone',           what:'346 Hz tone seen at 02:40',                  c:'#6fa8ff' },
-  { id:'buzz501',  name:'Electrical buzz',      what:'501 Hz mains-locked buzz',                   c:'#9aa7ff' },
-  { id:'fan',      name:'Laptop fan',           what:'Fan tones near 262, 525, 1050 Hz',           c:'#8b96a1' },
+  { id:'speech',   name:'Muffled speech',    what:'Voice pitch and speech rhythm together',     c:'#ff7ab6' },
+  { id:'rhythm',   name:'Speech rhythm',     what:'Loudness pulsing at syllable rate, 2–8 Hz',  c:'#f5a3c7' },
+  { id:'pitch',    name:'Voice pitch',       what:'Moving harmonic pitch, 75–300 Hz',           c:'#e0b3ff' },
+  { id:'alarm',    name:'Alarm-type tone',   what:'Strong tone or beeping, 1.5–5 kHz',          c:'#ff5d5d' },
+  { id:'whine',    name:'High whine',        what:'Steady 16.86 kHz electronic tone',           c:'#c58bff' },
+  { id:'other',    name:'Other steady tone', what:'Any other constant pitch, 150 Hz–20 kHz',    c:'#ff8ad1' },
+  { id:'rumble',   name:'Low rumble',        what:'10-second swell, e.g. a vehicle passing',    c:'#ffb347' },
+  { id:'click',    name:'Click or knock',    what:'Sharp, short sound',                          c:'#ffe066' },
+  { id:'hum100',   name:'Mains hum',         what:'100 Hz electrical hum',                       c:'#5fd0a5' },
+  { id:'hum50',    name:'Low hum',           what:'49–50 Hz motor or mains',                     c:'#4fc3d9' },
+  { id:'plant346', name:'Plant tone',        what:'346 Hz tone seen at 02:40',                   c:'#6fa8ff' },
+  { id:'buzz501',  name:'Electrical buzz',   what:'501 Hz mains-locked buzz',                    c:'#9aa7ff' },
+  { id:'fan',      name:'Laptop fan',        what:'Fan tones near 262, 525, 1050 Hz',            c:'#8b96a1' },
 ];
 const PHONE = /Android|iPhone|iPad/i.test(navigator.userAgent);
 if (PHONE) BOXES.splice(BOXES.findIndex(b => b.id === 'fan'), 1);
+const META = { manual: { name: 'Saved by hand', c: '#ffffff' } }; for (const b of BOXES) META[b.id] = b;
+const CLIP_IDS = new Set(['speech', 'alarm', 'rumble']);
 const $ = id => document.getElementById(id);
-const grid = $('grid'), els = {}, live = {}, rows = [];
+const els = {}, live = {};
 for (const b of BOXES) {
   const d = document.createElement('div'); d.className = 'box'; d.style.setProperty('--c', b.c);
   d.innerHTML = `<span class="dot"></span><h2>${b.name}</h2><div class="what">${b.what}</div><div class="now"></div><div class="last">Not heard yet</div>`;
-  grid.appendChild(d); els[b.id] = d; live[b.id] = { on:false, count:0 };
+  $('grid').appendChild(d); els[b.id] = d; live[b.id] = { on: false, count: 0, row: null };
 }
-const clock = d => d.toLocaleTimeString('en-GB');
-let ctx, stream, node, sp, running = false, startedAt = 0;
+const clock = ms => new Date(ms).toLocaleTimeString('en-GB');
+const fmtDur = s => s < 60 ? s.toFixed(1) + ' s' : s < 3600 ? (s / 60).toFixed(1) + ' min' : (s / 3600).toFixed(1) + ' h';
+const fmtGap = s => s < 90 ? Math.round(s) + ' s' : Math.floor(s / 60) + ' min ' + Math.round(s % 60) + ' s';
+const fmtHz = f => f < 1000 ? f.toFixed(0) + ' Hz' : (f / 1000).toFixed(2) + ' kHz';
 
-function onState() { // called from the audio callback after each chunk
-  const now = new Date();
+let ctx, stream, node, sp, running = false, paused = false, startedAt = 0, statusBase = '', wake = null;
+let rows = [], dirty = false, clips = [], pending = [];
+let ring = null, ringN = 0, rw = 0, tot = 0, lastSeq = 0, lastSec = -1;
+const KEY = 'soundspotter.log.v2';
+
+// ---------- log ----------
+function addRowDom(r) {
+  const m = META[r.id] || { name: r.id, c: '#888' }, tr = document.createElement('tr');
+  tr.innerHTML = `<td>${clock(r.s)}</td><td>${r.e ? fmtDur((r.e - r.s) / 1000) : '…'}</td><td><i class="sw" style="background:${m.c}"></i>${m.name}</td><td class="d"></td><td class="c"></td>`;
+  tr.children[3].textContent = r.d || ''; r.tr = tr; $('log').prepend(tr);
+  while ($('log').children.length > 300) { const last = $('log').lastChild; last.remove(); }
+}
+function save() { if (!dirty) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(rows.slice(-2000).map(r => ({ s: r.s, e: r.e, id: r.id, d: r.d })))); } catch (e) {} }
+try { for (const r of JSON.parse(localStorage.getItem(KEY) || '[]')) { if (!r.e) r.e = r.s; rows.push(r); } rows.slice(-300).forEach(addRowDom); } catch (e) {}
+
+function transitions(now) {
   for (const b of BOXES) {
     const s = sp.st[b.id], l = live[b.id], el = els[b.id];
     if (s.on && !l.on) {
-      l.on = true; l.count++; l.since = now; l.text = s.text;
-      const tr = document.createElement('tr'); tr.innerHTML = `<td>${clock(now)}</td><td>…</td><td>${b.name}</td><td></td>`; tr.lastChild.textContent = s.text;
-      $('log').prepend(tr); l.tr = tr; l.row = { start: now, end: null, name: b.name, detail: s.text }; rows.push(l.row);
-      el.classList.add('on');
+      l.on = true; l.count++; const r = { s: now, e: null, id: b.id, d: s.text }; l.row = r; rows.push(r); if (rows.length > 6000) rows.splice(0, 1000); addRowDom(r); dirty = true;
+      if (CLIP_IDS.has(b.id)) pending.push({ r, from: tot - 4 * sp.sr, to: null, max: tot + 16 * sp.sr });
+      el.classList.add('on'); el.querySelector('.last').textContent = `Since ${clock(now)}`;
     } else if (!s.on && l.on) {
-      l.on = false; const dur = (now - l.since) / 1000;
-      l.tr.children[1].textContent = dur < 60 ? dur.toFixed(1) + ' s' : (dur / 60).toFixed(1) + ' min'; l.row.end = now;
+      l.on = false; const r = l.row; r.e = now; if (r.tr) r.tr.children[1].textContent = fmtDur((now - r.s) / 1000); dirty = true;
+      for (const p of pending) if (p.r === r && p.to === null) p.to = tot + 1.5 * sp.sr;
       el.classList.remove('on'); el.classList.add('recent');
       el.querySelector('.last').textContent = `Last heard ${clock(now)} · ${l.count} time${l.count > 1 ? 's' : ''}`;
     }
-    if (s.on) { el.querySelector('.now').textContent = s.text; l.text = s.text; if (l.tr) { l.tr.lastChild.textContent = s.text; l.row.detail = s.text; } }
-    else el.querySelector('.now').textContent = '';
+    const nowEl = el.querySelector('.now');
+    if (s.on) { if (nowEl.textContent !== s.text) { nowEl.textContent = s.text; l.row.d = s.text; if (l.row.tr) l.row.tr.children[3].textContent = s.text; } }
+    else if (nowEl.textContent) nowEl.textContent = '';
   }
 }
 
+// ---------- clips ----------
+function cut(from, to) {
+  from = Math.max(from, tot - ringN + 1, 0); const n = Math.floor(to - from); if (n < sp.sr * 0.5) return null;
+  const out = new Float32Array(n); let idx = ((rw - (tot - from)) % ringN + ringN) % ringN;
+  for (let i = 0; i < n; i++) { out[i] = ring[idx]; if (++idx === ringN) idx = 0; }
+  return out;
+}
+function makeClip(x, r) {
+  let ss = 0; for (let i = 0; i < x.length; i++) ss += x[i] * x[i];
+  const rms = Math.sqrt(ss / x.length) || 1e-9, g = Math.min(1000, 0.1 / rms), gdb = Math.round(20 * Math.log10(g));
+  const buf = new ArrayBuffer(44 + x.length * 2), v = new DataView(buf), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + x.length * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sp.sr, true); v.setUint32(28, sp.sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, x.length * 2, true);
+  for (let i = 0; i < x.length; i++) v.setInt16(44 + i * 2, Math.tanh(x[i] * g) * 0.95 * 32767, true);
+  const d = new Date(r.s), p = n => String(n).padStart(2, '0');
+  const name = `sound-spotter_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}_${(META[r.id] || { name: r.id }).name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}_gain-${gdb < 0 ? 'minus' : 'plus'}${Math.abs(gdb)}dB.wav`;
+  const clip = { url: URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })), name, r }; r.clip = clip; clips.push(clip);
+  if (r.tr) {
+    const c = r.tr.children[4], play = document.createElement('button'), a = document.createElement('a');
+    play.textContent = '▶ Play'; play.onclick = () => playClip(clip, play); a.textContent = 'Save'; a.href = clip.url; a.download = name; c.append(play, a);
+  }
+  while (clips.length > 24) { const old = clips.shift(); URL.revokeObjectURL(old.url); old.r.clip = null; if (old.r.tr) old.r.tr.children[4].textContent = 'expired'; }
+}
+const player = $('player'); let playingBtn = null;
+function playClip(clip, btn) {
+  if (playingBtn === btn && !player.paused) { player.pause(); return; }
+  if (playingBtn) playingBtn.textContent = '▶ Play';
+  playingBtn = btn; btn.textContent = '■ Stop'; paused = true; player.src = clip.url; player.play().catch(() => {});
+}
+player.onpause = player.onended = () => { if (playingBtn) playingBtn.textContent = '▶ Play'; setTimeout(() => { if (player.paused) paused = false; }, 500); };
+$('snap').onclick = () => { if (!running) return; const x = cut(tot - 30 * sp.sr, tot); if (!x) return; const now = Date.now(), r = { s: now - x.length / sp.sr * 1000, e: now, id: 'manual', d: 'the last ' + Math.round(x.length / sp.sr) + ' seconds' }; rows.push(r); addRowDom(r); makeClip(x, r); dirty = true; };
+
+// ---------- live spectrogram ----------
+const water = $('water'), wctx = water.getContext('2d', { willReadFrequently: false }); let wf = null;
+const LUT = (() => { const st = [[0, 11, 14, 18], [0.25, 43, 27, 90], [0.5, 139, 47, 119], [0.75, 240, 128, 60], [1, 255, 243, 176]], out = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) { const t = i / 255; let j = 0; while (j < st.length - 2 && t > st[j + 1][0]) j++; const a = st[j], b = st[j + 1], u = (t - a[0]) / (b[0] - a[0]); for (let c = 0; c < 3; c++) out[i * 3 + c] = a[c + 1] + (b[c + 1] - a[c + 1]) * u; } return out; })();
+function initWater() {
+  const W = Math.max(200, Math.floor(water.clientWidth)), H = Math.floor(water.clientHeight); water.width = W; water.height = H;
+  wctx.fillStyle = '#0b0e12'; wctx.fillRect(0, 0, W, H);
+  const fmax = Math.min(20000, sp.sr / 2 * 0.98), fmin = 50, hzb = sp.sr / sp.NS, k1 = new Int32Array(H), k2 = new Int32Array(H), fy = y => fmax * Math.pow(fmin / fmax, y / H);
+  for (let y = 0; y < H; y++) { k1[y] = Math.max(1, Math.round(fy(y + 1) / hzb)); k2[y] = Math.max(k1[y], Math.round(fy(y) / hzb) - 1); }
+  wf = { W, H, k1, k2, col: wctx.createImageData(1, H), acc: new Float32Array(H).fill(-1e9), n: 0, every: W < 600 ? 2 : 1, lo: null, cnt: 0 };
+  $('wfax').innerHTML = ''; for (const f of [100, 300, 1000, 3000, 10000]) { const s = document.createElement('span'); s.textContent = fmtHz(f).replace('.00', ''); s.style.top = (Math.log(f / fmax) / Math.log(fmin / fmax) * 100) + '%'; $('wfax').appendChild(s); }
+}
+function waterColumn() {
+  if (!wf) return; const d = sp.shortDb, { H, k1, k2, acc } = wf;
+  for (let y = 0; y < H; y++) { let m = -1e9; for (let k = k1[y]; k <= k2[y]; k++) if (d[k] > m) m = d[k]; if (m > acc[y]) acc[y] = m; }
+  if (++wf.n < wf.every) return; wf.n = 0;
+  if (wf.cnt++ % 10 === 0) { const s = Float32Array.from(acc).sort(), q = s[Math.floor(H * 0.15)] - 2; wf.lo = wf.lo === null ? q : wf.lo + 0.2 * (q - wf.lo); }
+  const px = wf.col.data;
+  for (let y = 0; y < H; y++) { const i = Math.max(0, Math.min(255, Math.round(Math.pow(Math.max(0, Math.min(1, (acc[y] - wf.lo) / 34)), 0.75) * 255))) * 3; px[y * 4] = LUT[i]; px[y * 4 + 1] = LUT[i + 1]; px[y * 4 + 2] = LUT[i + 2]; px[y * 4 + 3] = 255; acc[y] = -1e9; }
+  wctx.drawImage(water, -1, 0); wctx.putImageData(wf.col, wf.W - 1, 0);
+}
+
+// ---------- timeline ----------
+const tl = $('tl'); const laneH = PHONE ? 13 : 15, gut = PHONE ? 96 : 124;
+tl.style.height = (BOXES.length * laneH + 20) + 'px';
+function drawTimeline(now) {
+  const W = tl.clientWidth, H = tl.clientHeight; if (tl.width !== W * 2) { tl.width = W * 2; tl.height = H * 2; }
+  const g = tl.getContext('2d'); g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
+  const span = +$('span').value * 1000, t0 = now - span, x = t => gut + (t - t0) / span * (W - gut - 4);
+  g.font = (PHONE ? 10 : 11) + 'px Segoe UI, Roboto, sans-serif'; g.textBaseline = 'middle';
+  const step = span <= 600000 ? 120000 : span <= 3600000 ? 600000 : 3600000; g.strokeStyle = '#2a3139'; g.fillStyle = '#8b96a1';
+  for (let t = Math.ceil(t0 / step) * step; t <= now; t += step) { g.beginPath(); g.moveTo(x(t), 0); g.lineTo(x(t), H - 16); g.stroke(); g.fillText(clock(t).slice(0, 5), x(t) + 3, H - 8); }
+  BOXES.forEach((b, i) => { const y = i * laneH; g.fillStyle = live[b.id].on ? '#e6e9ec' : '#8b96a1'; g.fillText(b.name, 4, y + laneH / 2); });
+  const lane = {}; BOXES.forEach((b, i) => lane[b.id] = i);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i], e = r.e || now; if (r.s < t0 - span && e < t0) break; if (e < t0 || lane[r.id] === undefined) continue;
+    const x1 = Math.max(gut, x(r.s)), x2 = x(e); g.fillStyle = META[r.id].c; g.fillRect(x1, lane[r.id] * laneH + 2, Math.max(1.5, x2 - x1), laneH - 4);
+  }
+}
+$('span').onchange = () => { drawTimeline(Date.now()); if (running) summary(Date.now()); };
+
+// ---------- plain-language summary and tone list ----------
+function summary(now) {
+  const on = BOXES.filter(b => live[b.id].on).map(b => b.name);
+  const span = +$('span').value * 1000, label = $('span').selectedOptions[0].textContent.toLowerCase(), since = Math.max(now - span, startedAt);
+  const inWin = id => rows.filter(r => r.id === id && (r.e || now) >= since && r.s >= startedAt - 1000);
+  const every = rs => { if (rs.length < 3) return ''; const st = rs.map(r => r.s).sort((a, b) => a - b), d = st.slice(1).map((v, i) => (v - st[i]) / 1000), m = d.slice().sort((a, b) => a - b)[d.length >> 1];
+    const ok = d.filter(v => Math.abs(v - m) <= 0.2 * m).length; return m > 5 && ok >= d.length - (d.length >= 4 ? 1 : 0) ? `, about every ${fmtGap(m)}` : ''; };
+  const total = rs => fmtDur(rs.reduce((a, r) => a + ((r.e || now) - Math.max(r.s, since)) / 1000, 0));
+  const parts = [], sp_ = inWin('speech'), al = inWin('alarm'), ru = inWin('rumble'), ck = inWin('click'), ot = inWin('other');
+  parts.push(sp_.length ? `<b>muffled speech ${sp_.length}× (${total(sp_)})</b>` : 'no muffled speech');
+  parts.push(al.length ? `<b>alarm-type tone ${al.length}× (${total(al)})</b>` : 'no alarm-type tones');
+  if (ru.length) parts.push(`<b>low rumble ${ru.length}×</b>${every(ru)}`);
+  if (ck.length) parts.push(`${ck.length} click${ck.length > 1 ? 's' : ''} or knock${ck.length > 1 ? 's' : ''}${every(ck)}`);
+  if (ot.length) parts.push(`other steady tone ${ot.length}×`);
+  $('summary').innerHTML = `<div class="now">Hearing now: ${on.length ? on.join(', ') : sp.longCount < 6 ? 'still warming up' : 'nothing it recognises'}.</div><div class="past">In the ${label} of this session: ${parts.join(' · ')}.</div>`;
+  const tones = [];
+  for (const id of ['hum50', 'hum100', 'plant346', 'buzz501', 'whine']) if (sp.st[id].on) tones.push({ f: parseFloat(sp.st[id].text), faint: /faint/.test(sp.st[id].text) });
+  for (const t of sp.steadyTones) if (!tones.some(q => Math.abs(q.f - t.f) < Math.max(3, t.f * 0.004))) tones.push(t);
+  tones.sort((a, b) => a.f - b.f);
+  $('tones').innerHTML = tones.length ? tones.map(t => `<i class="${t.faint ? 'f' : ''}">${fmtHz(t.f)}${t.faint ? ' · faint' : ''}</i>`).join('') : '<i class="f">none yet</i>';
+}
+
+// ---------- audio ----------
+function onChunk(l, r) {
+  if (paused || !running) return;
+  const n = l.length; for (let i = 0; i < n; i++) { ring[rw] = r ? (l[i] + r[i]) * 0.5 : l[i]; if (++rw === ringN) rw = 0; } tot += n;
+  sp.push(l, r); const now = Date.now(); transitions(now);
+  for (let i = pending.length - 1; i >= 0; i--) { const p = pending[i]; if ((p.to !== null && tot >= p.to) || tot >= p.max) { pending.splice(i, 1); const x = cut(p.from, Math.min(tot, p.to === null ? p.max : p.to)); if (x) makeClip(x, p.r); } }
+  if (sp.shortSeq !== lastSeq) { lastSeq = sp.shortSeq; waterColumn(); }
+  const sec = Math.floor(sp.t); if (sec !== lastSec) { lastSec = sec; summary(now); drawTimeline(now); if (sec % 5 === 0) save(); }
+}
 async function listMics(keep) {
   const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications');
   const sel = $('mic'); sel.innerHTML = '';
@@ -354,48 +552,57 @@ async function start() {
     const want = id => ({ audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 }, sampleRate: { ideal: 48000 } } });
     stream = await navigator.mediaDevices.getUserMedia(want($('mic').value));
     const before = $('mic').value; await listMics(before);
-    if (!before && $('mic').value && stream.getAudioTracks()[0].getSettings().deviceId !== $('mic').value) { // labels only appear after permission: switch to the Surface mics
-      stream.getTracks().forEach(t => t.stop()); stream = await navigator.mediaDevices.getUserMedia(want($('mic').value));
-    }
+    if (!before && $('mic').value && stream.getAudioTracks()[0].getSettings().deviceId !== $('mic').value) { stream.getTracks().forEach(t => t.stop()); stream = await navigator.mediaDevices.getUserMedia(want($('mic').value)); }
     const tr = stream.getAudioTracks()[0], set = tr.getSettings();
-    ctx = new AudioContext({ sampleRate: set.sampleRate || 48000, latencyHint: 'playback' });
-    await ctx.resume();
-    sp = new Spotter(ctx.sampleRate);
+    ctx = new AudioContext({ sampleRate: set.sampleRate || 48000, latencyHint: 'playback' }); await ctx.resume();
+    sp = new Spotter(ctx.sampleRate); sp.setSensitivity(+$('sens').value);
+    ringN = Math.round(ctx.sampleRate * 45); ring = new Float32Array(ringN); rw = 0; tot = 0; lastSeq = 0; lastSec = -1; pending = [];
+    for (const b of BOXES) live[b.id].on = false;
+    initWater();
     const src = ctx.createMediaStreamSource(stream); node = ctx.createScriptProcessor(4096, 2, 1);
     const mute = ctx.createGain(); mute.gain.value = 0;
-    node.onaudioprocess = e => { const b = e.inputBuffer; sp.push(b.getChannelData(0), b.numberOfChannels > 1 ? b.getChannelData(1) : null); onState(); };
+    node.onaudioprocess = e => { const b = e.inputBuffer; onChunk(b.getChannelData(0), b.numberOfChannels > 1 ? b.getChannelData(1) : null); };
     src.connect(node); node.connect(mute); mute.connect(ctx.destination);
-    document.addEventListener('visibilitychange', () => { if (running && !document.hidden) { ctx.resume(); if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => wake = w).catch(() => {}); } });
-    running = true; startedAt = Date.now(); $('go').textContent = 'Stop'; $('go').classList.remove('primary');
+    running = true; paused = false; startedAt = Date.now(); $('go').textContent = 'Stop'; $('go').classList.remove('primary'); $('snap').disabled = false;
     const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => set[k] === true);
     statusBase = `<b>${tr.label}</b> · ${ctx.sampleRate} Hz` + (proc.length ? ` · <span class="warn">browser processing still on: ${proc.join(', ')}</span>` : ' · browser processing off');
     try { wake = await navigator.wakeLock.request('screen'); } catch (e) {}
     draw();
   } catch (e) { $('status').innerHTML = `<span class="warn">Could not open the microphone: ${e.message}. Allow microphone access for this page and try again.</span>`; }
 }
-let statusBase = '', wake = null;
 function stop() {
-  running = false; if (node) node.disconnect(); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close(); if (wake) wake.release();
-  for (const b of BOXES) { sp.st[b.id].on = false; } onState();
-  $('go').textContent = 'Start listening'; $('go').classList.add('primary'); $('status').textContent = 'Stopped.'; $('lvl').style.width = '0';
+  running = false; if (node) node.disconnect(); if (stream) stream.getTracks().forEach(t => t.stop()); if (ctx) ctx.close(); if (wake) { try { wake.release(); } catch (e) {} }
+  for (const b of BOXES) sp.st[b.id].on = false; transitions(Date.now()); dirty = true; save(); drawTimeline(Date.now());
+  $('go').textContent = 'Start listening'; $('go').classList.add('primary'); $('snap').disabled = true; $('status').textContent = 'Stopped.'; $('lvl').style.width = '0'; $('lvltxt').textContent = '';
 }
 $('go').onclick = () => running ? stop() : start();
 $('mic').onchange = () => { if (running) { stop(); start(); } };
+$('sens').onchange = () => { if (sp) sp.setSensitivity(+$('sens').value); };
+document.addEventListener('visibilitychange', () => { if (running && !document.hidden) { ctx.resume(); if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => wake = w).catch(() => {}); } });
+window.addEventListener('pagehide', () => { dirty = true; save(); });
+window.addEventListener('resize', () => { if (running && wf && Math.abs(water.clientWidth - wf.W) > 40) initWater(); drawTimeline(Date.now()); });
 $('csv').onclick = () => {
-  const q = s => '"' + String(s).replace(/"/g, '""') + '"', iso = d => d ? d.toISOString() : '';
-  const csv = 'start,end,seconds,sound,detail\n' + rows.map(r => [iso(r.start), iso(r.end), r.end ? ((r.end - r.start) / 1000).toFixed(1) : '', q(r.name), q(r.detail)].join(',')).join('\n');
+  const q = s => '"' + String(s || '').replace(/"/g, '""') + '"', iso = ms => ms ? new Date(ms).toISOString() : '';
+  const csv = 'start,end,seconds,sound,detail,clip_file\n' + rows.map(r => [iso(r.s), iso(r.e), r.e ? ((r.e - r.s) / 1000).toFixed(1) : '', q((META[r.id] || { name: r.id }).name), q(r.d), q(r.clip ? r.clip.name : '')].join(',')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = 'sound-spotter-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv'; a.click();
+  a.download = 'sound-spotter-log_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv'; a.click();
+};
+let clearArmed = 0;
+$('clear').onclick = () => {
+  if (Date.now() - clearArmed > 4000) { clearArmed = Date.now(); $('clear').textContent = 'Tap again to clear everything'; setTimeout(() => { $('clear').textContent = 'Clear log'; }, 4000); return; }
+  clearArmed = 0; $('clear').textContent = 'Clear log'; for (const c of clips) URL.revokeObjectURL(c.url); clips = []; pending = [];
+  rows = rows.filter(r => !r.e); $('log').innerHTML = ''; rows.forEach(addRowDom); for (const b of BOXES) { live[b.id].count = live[b.id].on ? 1 : 0; if (!live[b.id].on) { els[b.id].classList.remove('recent'); els[b.id].querySelector('.last').textContent = 'Not heard yet'; } }
+  try { localStorage.removeItem(KEY); } catch (e) {} drawTimeline(Date.now());
 };
 function draw() {
   if (!running) return; requestAnimationFrame(draw);
-  $('lvl').style.width = Math.max(0, Math.min(100, (sp.level + 90) / 80 * 100)) + '%';
-  const secs = Math.round((Date.now() - startedAt) / 1000), mm = String(Math.floor(secs / 60)).padStart(2, '0'), ss = String(secs % 60).padStart(2, '0');
-  $('status').innerHTML = statusBase + (sp.stereo === null ? '' : sp.stereo ? ' · two microphones' : ' · one microphone channel') + ` · listening ${mm}:${ss}` + (sp.longCount < 6 ? ' · tone boxes warming up' : '');
+  $('lvl').style.width = Math.max(0, Math.min(100, (sp.level + 90) / 80 * 100)) + '%'; $('lvltxt').textContent = isFinite(sp.level) ? sp.level.toFixed(0) + ' dBFS' : '';
+  const secs = Math.round((Date.now() - startedAt) / 1000), hh = Math.floor(secs / 3600), mm = String(Math.floor(secs / 60) % 60).padStart(2, '0'), ss = String(secs % 60).padStart(2, '0');
+  $('status').innerHTML = statusBase + (sp.stereo === null ? '' : sp.stereo ? ' · two microphones' : ' · one microphone channel') + ` · listening ${hh ? hh + ':' : ''}${mm}:${ss}` + (paused ? ' · <span class="warn">paused while a clip plays</span>' : sp.longCount < 6 ? ' · tone boxes warming up' : '');
   const cv = $('spec'); if (cv.width !== cv.clientWidth * 2) { cv.width = cv.clientWidth * 2; cv.height = cv.clientHeight * 2; }
   const g = cv.getContext('2d'), W = cv.width / 2, H = cv.height / 2; g.setTransform(2, 0, 0, 2, 0, 0); g.clearRect(0, 0, W, H);
   const x = f => Math.log(f / 20) / Math.log(1000) * W;
-  g.fillStyle = '#8b96a1'; g.font = '11px Segoe UI, sans-serif'; g.strokeStyle = '#2a3139'; g.lineWidth = 1;
+  g.fillStyle = '#8b96a1'; g.font = '11px Segoe UI, Roboto, sans-serif'; g.strokeStyle = '#2a3139'; g.lineWidth = 1;
   for (const [f, t] of (W < 500 ? [[100, '100'], [1000, '1k'], [10000, '10k']] : [[50, '50'], [100, '100'], [200, '200'], [500, '500'], [1000, '1k'], [2000, '2k'], [5000, '5k'], [10000, '10k']])) { g.beginPath(); g.moveTo(x(f), 0); g.lineTo(x(f), H - 14); g.stroke(); g.fillText(t, x(f) + 3, H - 3); }
   if (sp.longCount < 1) return;
   const N = sp.NL, hz = sp.sr / N, trace = (arr, col) => {
@@ -407,7 +614,8 @@ function draw() {
   };
   if (sp.stereo) trace(sp.cohDb, '#4fc3d9'); trace(sp.powDb, '#ffb347');
 }
-if (navigator.mediaDevices) listMics().catch(() => {}); else $('status').innerHTML = '<span class="warn">This browser cannot open the microphone from this page.</span>';
+drawTimeline(Date.now());
+if (navigator.mediaDevices) listMics().catch(() => {}); else $('status').innerHTML = '<span class="warn">This browser cannot open the microphone from this page. It needs to be opened over HTTPS.</span>';
 </script>
 </body>
 </html>
