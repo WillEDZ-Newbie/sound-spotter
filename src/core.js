@@ -166,17 +166,25 @@ class Spotter {
     if (!ru.on || this.b1.length < 100) { this.b1.push(v1); this.b2.push(v2); if (this.b1.length > 900) { this.b1.shift(); this.b2.shift(); } }
     // alarm-type tone 1.5–5 kHz
     const k1 = this.bin(1500, NS), k2 = this.bin(5000, NS); let pk = -1e9, kp = k1;
-    for (let k = k1; k <= k2; k++) if (this.shortDb[k] > pk) { pk = this.shortDb[k]; kp = k; }
-    const pr = pk - median(this.shortDb.subarray(k1, k2 + 1)), al = this.st.alarm, ne = this.st.near; this.lastPr = pr;
+    // prominence over the spectrum just either side of each bin (about 300 Hz each way), so a sloping background
+    // (strong at 1.5 kHz, weak at 5 kHz) is not mistaken for a tone at the bottom edge of the band
+    if (!this.alCum || this.alCum.length !== this.shortDb.length + 1) this.alCum = new Float64Array(this.shortDb.length + 1);
+    const cum = this.alCum, W = 26, G = 4, lo = Math.max(1, k1 - W), hiK = Math.min(this.shortDb.length - 1, k2 + W);
+    cum[lo] = 0; for (let k = lo; k <= hiK; k++) cum[k + 1] = cum[k] + this.shortDb[k];
+    let pr = -1e9;
+    for (let k = k1; k <= k2; k++) { const a0 = Math.max(lo, k - W), a1 = k - G, b0 = k + G, b1 = Math.min(hiK, k + W);
+      const fl = ((cum[a1 + 1] - cum[a0]) + (cum[b1 + 1] - cum[b0])) / ((a1 - a0 + 1) + (b1 - b0 + 1)), d = this.shortDb[k] - fl; if (d > pr) { pr = d; pk = this.shortDb[k]; kp = k; } }
+    const al = this.st.alarm, ne = this.st.near; this.lastPr = pr;
     // something close to the microphone: a broadband jump in the highs that is not a tone (handling, rustle, a cough, typing)
     const tonal = pr >= this.K.alarm;
     if (hi >= 10 && !tonal && this.b1.length > 50) this.nearRun++; else this.nearRun = Math.max(0, this.nearRun - 1);
     if (this.nearRun >= 2) { this.nearHold = 20; ne.text = `broadband sound close to the microphone · highs +${hi.toFixed(0)} dB`; this.nearRun = 2; }
     ne.on = this.nearHold > 0; if (this.nearHold > 0) this.nearHold--;
     // an alarm holds one pitch (0.6 s or more) or repeats the same pitch; a blip at a new pitch each time is not one
-    const same = tonal && !clicked && Math.abs(kp - this.alF) <= 3;
+    /* a click no longer vetoes: a real beep starts sharply, and a broadband click has no local prominence */
+    const same = tonal && Math.abs(kp - this.alF) <= 3;
     if (same) this.alRun++;
-    else { if (this.alRun >= 2) { this.bursts.push({ t: this.t, k: this.alF }); if (this.bursts.length > 30) this.bursts.shift(); } this.alRun = tonal && !clicked ? 1 : 0; }
+    else { if (this.alRun >= 2) { this.bursts.push({ t: this.t, k: this.alF }); if (this.bursts.length > 30) this.bursts.shift(); } this.alRun = tonal ? 1 : 0; }
     this.alF = kp;
     const rep = this.bursts.filter(b => this.t - b.t < 12 && Math.abs(b.k - kp) <= 3).length;
     if ((this.alRun >= 6 || (this.alRun >= 2 && rep >= 2)) && !ne.on) { this.alHold = 20; al.text = `${(kp * this.sr / NS).toFixed(0)} Hz tone · ${pr.toFixed(0)} dB above background · ${this.alRun >= 6 ? 'held' : 'repeating'}`; }

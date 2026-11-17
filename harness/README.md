@@ -41,3 +41,7 @@ Cost on the voice clips (caught as expected, of 12), v3.1 -> v4: full system wit
 ## First phone export (17 Nov 2026, v4.1)
 
 Ten minutes from the Pixel gave 19 "Muffled speech" events, all with the voice model silent and the learned score at 15% or below; the clips show thumps over low rumble, no voiced harmonics. The hand rules now need the learned score to be at least 30% before they count on their own. Replaying the 40 clips: muffled speech 71.7 s (v3.1) -> 12.3 s. Harness recall with Silero is unchanged by this rule.
+
+## Alarm rule rebuilt (v4.3)
+
+Two faults found from a real recording on 17 Nov 2026. (1) Prominence was measured against the median of the whole 1.5-5 kHz band, so any sloping background lit the box at the bottom edge of the band (reported pitch wandering 1,500-1,730 Hz); it is now measured against the spectrum about 300 Hz either side of each bin. (2) A click vetoed the alarm, and every real beep starts with one, so a beeping smoke alarm was never caught; the veto is gone. `traps.js` now has two alarms that must light and a sloping hiss that must not.

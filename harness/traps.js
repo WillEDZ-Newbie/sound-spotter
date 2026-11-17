@@ -8,9 +8,17 @@ const traps={
  'loud steady 1 kHz tone':i=>0.05*Math.sin(2*Math.PI*1000*i/sr),
  '120 Hz buzz switching on and off every 5 s':i=>{const t=i/sr;return (Math.floor(t/5)%2?0.02:0)*Math.sign(Math.sin(2*Math.PI*120*t));},
 };
+const tilt=(()=>{let y=0,z=0;return i=>{y+=0.02*(rnd()*2-y);z+=0.2*(y-z);return 3*z;};})();
+traps['steeply sloping hiss (no tone)']=tilt;
+const must={'smoke alarm, three 0.5 s beeps at 3.1 kHz, repeating':i=>{const t=i/sr,c=t%4;return (t>8&&c<3&&c%1<0.5?0.004:0)*Math.sin(2*Math.PI*3100*t)+0.002*rnd();},
+ 'faint steady 2.8 kHz alarm tone from 8 s':i=>{const t=i/sr;return (t>8?0.0015:0)*Math.sin(2*Math.PI*2800*t)+0.002*rnd();}};
 let bad=0;const model=JSON.parse(fs.readFileSync(__dirname+'/../model.json'));
 for(const [name,f] of Object.entries(traps)){const sp=new Spotter(sr);sp.setSensitivity(+(process.argv[3]||1));sp.applyModel(model);const on={};const L=new Float32Array(2400),R=new Float32Array(2400);
  for(let i=0;i<n;i+=2400){for(let k=0;k<2400;k++){const v=f(i+k);L[k]=v+0.0004*rnd();R[k]=v+0.0004*rnd();}sp.push(L,R);for(const id of ['speech','voice','alarm','rhythm','pitch'])if(sp.st[id].on)on[id]=(on[id]||0)+0.05;}
- const lit=['speech','voice'].filter(id=>(on[id]||0)>=0.5);if(lit.length)bad++;
+ const lit=['speech','voice'].concat(/hiss|whine|pump|rumble/.test(name)?['alarm']:[]).filter(id=>(on[id]||0)>=0.5);if(lit.length)bad++;
  console.log((lit.length?'FAIL ':'ok   ')+name.padEnd(44),Object.entries(on).map(([k,v])=>k+' '+v.toFixed(1)+'s').join(', ')||'nothing lit');}
+for(const [name,f] of Object.entries(traps)){} 
+for(const [name,f] of Object.entries(must)){const sp=new Spotter(sr);sp.setSensitivity(+(process.argv[3]||1));sp.applyModel(model);let on=0;const L=new Float32Array(2400),R=new Float32Array(2400);
+ for(let i=0;i<n;i+=2400){for(let k=0;k<2400;k++){const v=f(i+k);L[k]=v+0.0004*rnd();R[k]=v+0.0004*rnd();}sp.push(L,R);if(sp.st.alarm.on)on+=0.05;}
+ if(on<5)bad++;console.log((on<5?'FAIL ':'ok   ')+('MUST LIGHT ALARM: '+name).padEnd(62),'alarm '+on.toFixed(1)+'s');}
 process.exit(bad?1:0);
